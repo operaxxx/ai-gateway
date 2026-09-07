@@ -1,4 +1,6 @@
-from gateway.types import ChatRequest, ChatResponse
+from collections.abc import Iterator
+
+from gateway.types import ChatRequest, ChatResponse, StreamEvent
 from gateway.anthropic_adapter import AnthropicAdapter
 from gateway.responses_adapter import ResponsesAdapter
 
@@ -20,6 +22,12 @@ class Gateway:
         adapter_cls = self._resolve_adapter(request.model)
         adapter = self._get_adapter(adapter_cls)
         return adapter.complete(request)
+
+    def stream(self, request: ChatRequest) -> Iterator[StreamEvent]:
+        """流式接口：返回统一 StreamEvent 生成器，边收边转发（中继模式）。"""
+        adapter_cls = self._resolve_adapter(request.model)
+        adapter = self._get_adapter(adapter_cls)
+        yield from adapter.stream(request)
 
     def _resolve_adapter(self, model: str) -> type:
         if model not in MODEL_ROUTES:

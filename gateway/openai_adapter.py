@@ -2,15 +2,31 @@ import os
 
 import httpx
 
+from gateway.env import load_env
 from gateway.types import ChatRequest, ChatResponse, Usage
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
+
+# 翻译表：Chat Completions 的 finish_reason -> 统一词表
+_FINISH_REASON_MAP = {
+    "stop": "stop",               # 自然生成完毕
+    "length": "max_tokens",       # 预算耗尽
+    "content_filter": "content_filter",
+}
+
+
+def _normalize_stop_reason(raw: str | None) -> str:
+    """查表翻译；认识的翻译，不认识的原样透传（向前兼容新值）。"""
+    if raw is None:
+        return "stop"
+    return _FINISH_REASON_MAP.get(raw, raw)
 
 
 class OpenAIAdapter:
     """OpenAI Chat Completions 协议适配器，可指向 DeepSeek 等兼容中转站。"""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
+        load_env()
         self.api_key = api_key or os.environ["OPENAI_API_KEY"]
         base = base_url or os.getenv("OPENAI_BASE_URL", DEFAULT_BASE_URL)
         path = os.getenv("OPENAI_API_PATH", "/v1/chat/completions")
@@ -45,7 +61,7 @@ class OpenAIAdapter:
         if choices:
             message = choices[0].get("message", {})
             text = message.get("content", "")
-            stop_reason = choices[0].get("finish_reason", "stop")
+            stop_reason = _normalize_stop_reason(choices[0].get("finish_reason"))
         usage_data = data.get("usage", {})
         return ChatResponse(
             text=text,
