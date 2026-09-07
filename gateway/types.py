@@ -14,6 +14,7 @@ class ChatRequest:
     messages: list[Message]
     max_tokens: int | None = None
     temperature: float | None = None
+    response_format: dict | None = None   # JSON Schema 字典，None=自由输出
 
 @dataclass(slots=True)
 class Usage:

@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from gateway.gateway import Gateway, MODEL_ROUTES
+from gateway.gateway import Gateway, MODEL_ROUTES, StructuredOutputError
 from gateway.types import ChatRequest, Message, StreamEvent
 
 app = FastAPI(title="AI Gateway", version="0.1.0")
@@ -59,6 +59,7 @@ class ChatRequestIn(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     stream: bool = False
+    response_format: dict | None = None   # JSON Schema，None=自由输出
 
 
 def _to_internal(req: ChatRequestIn) -> ChatRequest:
@@ -68,6 +69,7 @@ def _to_internal(req: ChatRequestIn) -> ChatRequest:
         messages=[Message(role=m.role, content=m.content) for m in req.messages],
         max_tokens=req.max_tokens,
         temperature=req.temperature,
+        response_format=req.response_format,
     )
 
 
@@ -136,6 +138,13 @@ def chat(req: ChatRequestIn):
             f"不支持的模型: {req.model}，支持: {list(MODEL_ROUTES.keys())}",
         )
 
+    # v1 不支持流式 + 结构化输出组合（JSON 流片段无法解析）
+    if req.stream and req.response_format is not None:
+        raise HTTPException(
+            400,
+            "stream=true 与 response_format 不兼容：JSON 流的增量片段无法解析，请使用非流式模式",
+        )
+
     internal_req = _to_internal(req)
 
     if req.stream:
@@ -152,7 +161,38 @@ def chat(req: ChatRequestIn):
             },
         )
 
-    resp = gw.complete(internal_req)
+    try:
+        resp = gw.complete(internal_req)
+    except StructuredOutputError as e:
+        # 422：输出内容不符合指定的 JSON Schema
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "structured_output_validation_failed",
+                "message": str(e),
+                "errors": [
+                    {
+                        "field": ".".join(str(x) for x in err.loc) or "root",
+                        "type": err.type,
+                        "message": err.message,
+                    }
+                    for err in e.errors
+                ],
+            },
+        )
+
+    # 结构化输出模式：返回解析后的对象而非纯文本
+    if req.response_format is not None and "structured_output" in resp.raw:
+        return {
+            "structured_output": resp.raw["structured_output"],
+            "model": resp.model,
+            "usage": {
+                "input_tokens": resp.usage.input_tokens,
+                "output_tokens": resp.usage.output_tokens,
+            },
+            "stop_reason": resp.stop_reason,
+        }
+
     return {
         "text": resp.text,
         "model": resp.model,

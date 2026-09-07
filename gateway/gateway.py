@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 
+from gateway.structured_output import validate as validate_structured
 from gateway.types import ChatRequest, ChatResponse, StreamEvent
 from gateway.anthropic_adapter import AnthropicAdapter
 from gateway.responses_adapter import ResponsesAdapter
@@ -12,6 +13,16 @@ MODEL_ROUTES: dict[str, type] = {
 }
 
 
+class StructuredOutputError(Exception):
+    """结构化输出校验失败时抛出。"""
+
+    def __init__(self, errors: list, raw_text: str = ""):
+        self.errors = errors
+        self.raw_text = raw_text
+        messages = "; ".join(f"[{'.'.join(str(x) for x in e.loc) or 'root'}] {e.message}" for e in errors)
+        super().__init__(f"结构化输出校验失败: {messages}")
+
+
 class Gateway:
     """统一网关：根据 model 名字路由到对应的适配器。"""
 
@@ -21,7 +32,15 @@ class Gateway:
     def complete(self, request: ChatRequest) -> ChatResponse:
         adapter_cls = self._resolve_adapter(request.model)
         adapter = self._get_adapter(adapter_cls)
-        return adapter.complete(request)
+        resp = adapter.complete(request)
+        # 结构化输出后处理：校验返回内容是否符合 schema
+        if request.response_format is not None:
+            result = validate_structured(resp.text, request.response_format)
+            if not result.ok:
+                raise StructuredOutputError(result.errors or [], result.raw_text)
+            # 校验通过，把解析后的结构化数据附加到 raw
+            resp.raw["structured_output"] = result.parsed
+        return resp
 
     def stream(self, request: ChatRequest) -> Iterator[StreamEvent]:
         """流式接口：返回统一 StreamEvent 生成器，边收边转发（中继模式）。"""

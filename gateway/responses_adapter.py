@@ -120,6 +120,14 @@ class ResponsesAdapter:
             payload["max_output_tokens"] = request.max_tokens
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        # 结构化输出：用 text.format 指定 JSON Schema
+        if request.response_format is not None:
+            payload["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "schema": request.response_format,
+                }
+            }
         return payload
 
     def _parse_response(self, fallback_model: str, data: dict) -> ChatResponse:

@@ -16,6 +16,7 @@ _STOP_REASON_MAP = {
     "stop_sequence": "stop",      # 命中自定义停止序列，也算正常结束
     "max_tokens": "max_tokens",   # 预算耗尽
     "refusal": "content_filter",  # 拒答/被过滤
+    "tool_use": "stop",           # 结构化输出场景，tool 调用完成即正常结束
 }
 
 
@@ -27,7 +28,7 @@ def _normalize_stop_reason(raw: str | None) -> str:
 
 
 class AnthropicAdapter:
-    """Anthropic Messages 协议适配器，可指向 DeepSeek 等兼容中转站。"""
+    """Anthropic Messages 协议适配器，指向 DeepSeek 官方 Anthropic 兼容端点。"""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
         load_env()
@@ -44,7 +45,10 @@ class AnthropicAdapter:
             json=self._build_payload(request),
         )
         response.raise_for_status()
-        return self._parse_response(request.model, response.json())
+        return self._parse_response(
+            request.model, response.json(),
+            structured=request.response_format is not None,
+        )
 
     def stream(self, request: ChatRequest) -> Iterator[StreamEvent]:
         """流式请求：把上游 SSE 翻译成统一 StreamEvent，边收边 yield（中继模式）。"""
@@ -110,11 +114,23 @@ class AnthropicAdapter:
             payload["system"] = "\n\n".join(system_texts)
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        # 结构化输出：用 tool_use 模式（不带 tool_choice，DeepSeek thinking 模式不支持强制 tool_choice）
+        if request.response_format is not None:
+            payload["tools"] = [{
+                "name": "structured_output",
+                "description": "Return the result as a structured JSON object matching the schema",
+                "input_schema": request.response_format,
+            }]
         return payload
 
-    def _parse_response(self, fallback_model: str, data: dict) -> ChatResponse:
+    def _parse_response(self, fallback_model: str, data: dict, *, structured: bool = False) -> ChatResponse:
         text = ""
         for part in data.get("content", []):
+            if part.get("type") == "tool_use" and structured:
+                # 结构化输出：tool_use 块的 input 就是解析好的 JSON 对象
+                import json as _json
+                text = _json.dumps(part.get("input", {}), ensure_ascii=False)
+                break
             if part.get("type") == "text":
                 text += part.get("text", "")
         usage_data = data.get("usage", {})
