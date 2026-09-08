@@ -11,3 +11,11 @@ wheels/
 
 # Secrets
 .env
+
+# Local prompt database
+prompts.db
+prompts.db-wal
+prompts.db-shm
+
+# ide
+.trae/

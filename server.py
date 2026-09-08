@@ -19,16 +19,35 @@
 运行:
   uv run uvicorn server:app --reload --port 8000
   curl http://localhost:8000/v1/chat -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}]}' -H "Content-Type: application/json"
+  curl http://localhost:8000/v1/prompts -d '{"id":"translator","name":"翻译","content":"把{{text}}从中文翻译成{{lang}}"}' -H "Content-Type: application/json"
+  curl http://localhost:8000/v1/chat -d '{"model":"deepseek-v4-flash","prompt":{"id":"translator","variables":{"text":"你好","lang":"英文"}},"messages":[{"role":"user","content":"请开始"}]}' -H "Content-Type: application/json"
 """
 
 import json
+import os
+import re
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from gateway.env import load_env
 from gateway.gateway import Gateway, MODEL_ROUTES, StructuredOutputError
+from gateway.prompt_render import (
+    InvalidTemplateError,
+    MissingVariablesError,
+    extract_variables,
+    render,
+)
+from gateway.prompt_store import (
+    PromptAlreadyExistsError,
+    PromptNotFoundError,
+    PromptStore,
+    PromptVersion,
+    SqlitePromptStore,
+)
 from gateway.types import ChatRequest, Message, StreamEvent
 
 app = FastAPI(title="AI Gateway", version="0.1.0")
@@ -43,6 +62,14 @@ app.add_middleware(
 
 gw = Gateway()
 
+# ---------- Prompt 存储 ----------
+# 介质由 env 决定（PROMPTS_DB_PATH），上层只依赖 PromptStore 协议，换介质换实现类即可
+load_env()
+store: PromptStore = SqlitePromptStore(os.environ.get("PROMPTS_DB_PATH", "prompts.db"))
+
+# prompt id 规则：小写字母/数字开头，可含 - _（作为 slug 出现在 URL 和引用里）
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
 
 # ---------- API 层请求模型（Pydantic） ----------
 # 和内部 ChatRequest 分开：API 层有 stream 字段，内部没有
@@ -53,6 +80,30 @@ class MessageIn(BaseModel):
     content: str
 
 
+class PromptCreateIn(BaseModel):
+    id: str                          # slug，作为引用锚点
+    name: str
+    description: str = ""
+    content: str                     # Jinja2 模板：{{var}} 占位 + {% if %}/{% for %} 等
+
+
+class PromptVersionCreateIn(BaseModel):
+    content: str                     # 新版本模板内容（旧版本不可变）
+
+
+class PromptRefIn(BaseModel):
+    """调用方对模板的引用：gateway 服务端渲染，替代调用方自己拼 system prompt。"""
+    id: str
+    version: int | Literal["latest"] = "latest"
+    variables: dict[str, Any] = {}   # 值任意 JSON 类型（list/dict 供循环使用）
+
+
+class PromptRenderIn(BaseModel):
+    """渲染预览请求（不调 LLM）。"""
+    version: int | Literal["latest"] = "latest"
+    variables: dict[str, Any] = {}
+
+
 class ChatRequestIn(BaseModel):
     model: str
     messages: list[MessageIn]
@@ -60,13 +111,14 @@ class ChatRequestIn(BaseModel):
     temperature: float | None = None
     stream: bool = False
     response_format: dict | None = None   # JSON Schema，None=自由输出
+    prompt: PromptRefIn | None = None     # 提供时渲染为 system 消息插到最前
 
 
-def _to_internal(req: ChatRequestIn) -> ChatRequest:
+def _to_internal(req: ChatRequestIn, messages: list[MessageIn]) -> ChatRequest:
     """API 层 Pydantic 模型 → 内部统一抽象 dataclass。"""
     return ChatRequest(
         model=req.model,
-        messages=[Message(role=m.role, content=m.content) for m in req.messages],
+        messages=[Message(role=m.role, content=m.content) for m in messages],
         max_tokens=req.max_tokens,
         temperature=req.temperature,
         response_format=req.response_format,
@@ -125,12 +177,116 @@ def list_models():
     }
 
 
+# ---------- Prompt 管理 ----------
+
+def _resolve_version(prompt_id: str, version: int | Literal["latest"]) -> PromptVersion:
+    """按版本号或 'latest' 解析模板版本；不存在直接转 HTTP 404。"""
+    ver = (store.get_latest_version(prompt_id) if version == "latest"
+           else store.get_version(prompt_id, version))
+    if ver is None:
+        raise HTTPException(404, f"prompt 版本不存在: {prompt_id}@{version}")
+    return ver
+
+
+@app.post("/v1/prompts", status_code=201)
+def create_prompt(req: PromptCreateIn):
+    """创建 prompt 模板（含版本 1）。变量从 content 提取存储，渲染时按声明校验。"""
+    if not _SLUG_PATTERN.fullmatch(req.id):
+        raise HTTPException(400, f"prompt id 不合法: {req.id!r}，需匹配 {_SLUG_PATTERN.pattern}")
+    try:
+        variables = extract_variables(req.content)   # 顺带完成语法校验
+    except InvalidTemplateError as e:
+        raise HTTPException(400, str(e))
+    try:
+        version = store.create_prompt(req.id, req.name, req.description, req.content, variables)
+    except PromptAlreadyExistsError as e:
+        raise HTTPException(409, str(e))
+    return {
+        "id": req.id, "name": req.name, "description": req.description,
+        "version": version, "variables": variables,
+    }
+
+
+@app.get("/v1/prompts")
+def list_prompts():
+    """列出全部 prompt（含最新版本号）。"""
+    return {"prompts": [
+        {"id": p.id, "name": p.name, "description": p.description,
+         "latest_version": p.latest_version, "created_at": p.created_at}
+        for p in store.list_prompts()
+    ]}
+
+
+@app.get("/v1/prompts/{prompt_id}")
+def get_prompt(prompt_id: str):
+    """prompt 详情 + 版本历史（不含模板正文，正文按版本取）。"""
+    p = store.get_prompt(prompt_id)
+    if p is None:
+        raise HTTPException(404, f"prompt 不存在: {prompt_id}")
+    return {
+        "id": p.id, "name": p.name, "description": p.description,
+        "latest_version": p.latest_version, "created_at": p.created_at,
+        "versions": [
+            {"version": v.version, "variables": v.variables, "created_at": v.created_at}
+            for v in store.list_versions(prompt_id)
+        ],
+    }
+
+
+@app.post("/v1/prompts/{prompt_id}/versions", status_code=201)
+def add_prompt_version(prompt_id: str, req: PromptVersionCreateIn):
+    """追加新版本。版本不可变：没有修改端点，改内容 = 发新版本。"""
+    try:
+        variables = extract_variables(req.content)   # 顺带完成语法校验
+    except InvalidTemplateError as e:
+        raise HTTPException(400, str(e))
+    try:
+        version = store.add_version(prompt_id, req.content, variables)
+    except PromptNotFoundError as e:
+        raise HTTPException(404, str(e))
+    return {"id": prompt_id, "version": version, "variables": variables}
+
+
+@app.get("/v1/prompts/{prompt_id}/versions/{version}")
+def get_prompt_version(prompt_id: str, version: str):
+    """取指定版本内容。version 支持整数或 'latest'。"""
+    if version != "latest":
+        try:
+            version_num: int | Literal["latest"] = int(version)
+        except ValueError:
+            raise HTTPException(400, f"版本号不合法: {version!r}，应为整数或 'latest'")
+    else:
+        version_num = "latest"
+    ver = _resolve_version(prompt_id, version_num)
+    return {
+        "id": ver.prompt_id, "version": ver.version, "content": ver.content,
+        "variables": ver.variables, "created_at": ver.created_at,
+    }
+
+
+@app.post("/v1/prompts/{prompt_id}/render")
+def render_prompt(prompt_id: str, req: PromptRenderIn):
+    """渲染预览：不调用 LLM，用于调试模板与变量。"""
+    ver = _resolve_version(prompt_id, req.version)
+    try:
+        rendered = render(ver.content, req.variables)
+    except MissingVariablesError as e:
+        raise HTTPException(400, {
+            "error": "missing_variables",
+            "message": str(e),
+            "missing": e.missing,
+        })
+    return {"id": prompt_id, "version": ver.version, "rendered": rendered}
+
+
 @app.post("/v1/chat")
 def chat(req: ChatRequestIn):
     """统一聊天接口。
 
     - stream=false（默认）：返回 JSON
     - stream=true：返回 text/event-stream，事件格式见文件头注释
+    - 提供 prompt 引用时：gateway 服务端渲染模板为 system 消息插到最前，
+      此时调用方 messages 不允许自带 system（渲染结果即 system）
     """
     if req.model not in MODEL_ROUTES:
         raise HTTPException(
@@ -145,7 +301,26 @@ def chat(req: ChatRequestIn):
             "stream=true 与 response_format 不兼容：JSON 流的增量片段无法解析，请使用非流式模式",
         )
 
-    internal_req = _to_internal(req)
+    # prompt 引用解析：渲染失败快速报错，不把残缺 prompt 发给 LLM
+    messages_in = req.messages
+    if req.prompt is not None:
+        if any(m.role == "system" for m in messages_in):
+            raise HTTPException(
+                400,
+                "使用 prompt 引用时 messages 不允许包含 system 消息：模板渲染结果将作为 system 消息",
+            )
+        ver = _resolve_version(req.prompt.id, req.prompt.version)
+        try:
+            system_text = render(ver.content, req.prompt.variables)
+        except MissingVariablesError as e:
+            raise HTTPException(400, {
+                "error": "missing_variables",
+                "message": str(e),
+                "missing": e.missing,
+            })
+        messages_in = [MessageIn(role="system", content=system_text)] + list(messages_in)
+
+    internal_req = _to_internal(req, messages_in)
 
     if req.stream:
         def generate():
