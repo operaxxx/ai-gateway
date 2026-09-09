@@ -1,7 +1,7 @@
 """诊断脚本：dump DeepSeek responses 流的真实事件名和数据样本。
 
 用途：当适配器的 delta 过滤不匹配真实上游时，用这个看线上字节，不猜协议。
-运行: uv run python debug_dump_sse.py
+运行（在项目根目录）: uv run python -m scripts.debug_dump_sse
 """
 
 from gateway.responses_adapter import ResponsesAdapter
