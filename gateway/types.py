@@ -34,6 +34,7 @@ class ChatResponse:
     #   error          = 生成失败
     #   其他            = 上游新词表值透传（向前兼容）
     raw: dict[str, Any] = field(default_factory=dict)
+    elapsed_ms: float | None = None   # 非流式总耗时（毫秒），由 Gateway 打点；非流式无 TTFT 概念
 
 # ---------- 统一流式事件（方案 A：自定义极简格式） ----------
 # 适配器把各厂商的 SSE 事件翻译成下面 4 种事件，前端只需实现一个解析器：
@@ -53,3 +54,8 @@ class StreamEvent:
     usage: Usage | None = None          # done: 最终用量
     stop_reason: str | None = None      # done: 统一后的停止原因
     error: str | None = None            # error: 错误信息
+    # 计时指标（毫秒），由 Gateway 统一打点，只出现在 done/error 事件上：
+    #   ttft_ms    = 发起上游请求 → 收到第一个 delta（text/reasoning 均算首 token）
+    #   elapsed_ms = 发起上游请求 → 流结束（done/error）
+    ttft_ms: float | None = None
+    elapsed_ms: float | None = None

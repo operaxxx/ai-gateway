@@ -1,3 +1,4 @@
+import time
 from collections.abc import Iterator
 
 from gateway.structured_output import validate as validate_structured
@@ -32,7 +33,10 @@ class Gateway:
     def complete(self, request: ChatRequest) -> ChatResponse:
         adapter_cls = self._resolve_adapter(request.model)
         adapter = self._get_adapter(adapter_cls)
+        started = time.monotonic()
         resp = adapter.complete(request)
+        # 总耗时在适配器返回后立即打点：只统计上游往返，不含本地结构化校验
+        resp.elapsed_ms = (time.monotonic() - started) * 1000.0
         # 结构化输出后处理：校验返回内容是否符合 schema
         if request.response_format is not None:
             result = validate_structured(resp.text, request.response_format)
@@ -43,10 +47,24 @@ class Gateway:
         return resp
 
     def stream(self, request: ChatRequest) -> Iterator[StreamEvent]:
-        """流式接口：返回统一 StreamEvent 生成器，边收边转发（中继模式）。"""
+        """流式接口：返回统一 StreamEvent 生成器，边收边转发（中继模式）。
+
+        计时在本层统一打点，适配器不感知计时（口径不随厂商漂移）：
+        - 起点 started：本生成器首次被迭代时，即适配器即将发起上游请求前
+        - ttft_ms：第一个 delta 到达（text/reasoning 通道均算首 token）
+        - elapsed_ms：done/error 事件时，即上游流结束
+        """
         adapter_cls = self._resolve_adapter(request.model)
         adapter = self._get_adapter(adapter_cls)
-        yield from adapter.stream(request)
+        started = time.monotonic()
+        ttft_ms: float | None = None
+        for ev in adapter.stream(request):
+            if ev.type == "delta" and ttft_ms is None:
+                ttft_ms = (time.monotonic() - started) * 1000.0
+            elif ev.type in ("done", "error"):
+                ev.ttft_ms = ttft_ms
+                ev.elapsed_ms = (time.monotonic() - started) * 1000.0
+            yield ev
 
     def _resolve_adapter(self, model: str) -> type:
         if model not in MODEL_ROUTES:

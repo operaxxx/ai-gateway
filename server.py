@@ -11,10 +11,14 @@
   data: {"type":"delta","text":"思考中...","channel":"reasoning"}
 
   event: done
-  data: {"type":"done","usage":{"input_tokens":15,"output_tokens":5},"stop_reason":"stop"}
+  data: {"type":"done","usage":{"input_tokens":15,"output_tokens":5},"stop_reason":"stop","ttft_ms":320.5,"elapsed_ms":1850.2}
 
   event: error
-  data: {"type":"error","error":"消息"}
+  data: {"type":"error","error":"消息","elapsed_ms":120.3}
+
+  计时字段（毫秒，仅流结束事件携带）：
+    ttft_ms    = 网关发起上游请求 → 收到第一个 delta（首 token 延迟）
+    elapsed_ms = 网关发起上游请求 → 流结束；非流式 JSON 响应同名字段为总耗时
 
 运行:
   uv run uvicorn server:app --reload --port 8000
@@ -132,6 +136,16 @@ def _sse_line(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _timing_fields(ev: StreamEvent) -> dict:
+    """提取 Gateway 打点的计时字段（毫秒，保留 1 位小数）；未打点则省略。"""
+    fields = {}
+    if ev.ttft_ms is not None:
+        fields["ttft_ms"] = round(ev.ttft_ms, 1)
+    if ev.elapsed_ms is not None:
+        fields["elapsed_ms"] = round(ev.elapsed_ms, 1)
+    return fields
+
+
 def _event_to_sse(ev: StreamEvent) -> str:
     """把统一 StreamEvent 翻译成下游 SSE 行。"""
     if ev.type == "start":
@@ -153,9 +167,14 @@ def _event_to_sse(ev: StreamEvent) -> str:
             "type": "done",
             "usage": usage,
             "stop_reason": ev.stop_reason,
+            **_timing_fields(ev),
         })
     if ev.type == "error":
-        return _sse_line("error", {"type": "error", "error": ev.error})
+        return _sse_line("error", {
+            "type": "error",
+            "error": ev.error,
+            **_timing_fields(ev),
+        })
     return ""
 
 
@@ -356,6 +375,9 @@ def chat(req: ChatRequestIn):
             },
         )
 
+    # 非流式无 TTFT 概念，只返回上游往返总耗时
+    elapsed_ms = round(resp.elapsed_ms, 1) if resp.elapsed_ms is not None else None
+
     # 结构化输出模式：返回解析后的对象而非纯文本
     if req.response_format is not None and "structured_output" in resp.raw:
         return {
@@ -366,6 +388,7 @@ def chat(req: ChatRequestIn):
                 "output_tokens": resp.usage.output_tokens,
             },
             "stop_reason": resp.stop_reason,
+            "elapsed_ms": elapsed_ms,
         }
 
     return {
@@ -376,4 +399,5 @@ def chat(req: ChatRequestIn):
             "output_tokens": resp.usage.output_tokens,
         },
         "stop_reason": resp.stop_reason,
+        "elapsed_ms": elapsed_ms,
     }
