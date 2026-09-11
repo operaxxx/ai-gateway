@@ -30,15 +30,18 @@
 import json
 import os
 import re
+import time
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from gateway.env import load_env
+from gateway.errors import GatewayError, from_unexpected, http_status_for
 from gateway.gateway import Gateway, MODEL_ROUTES, StructuredOutputError
+from gateway.logger_setup import new_request_id, setup_logging
 from gateway.prompt_render import (
     InvalidTemplateError,
     MissingVariablesError,
@@ -56,6 +59,53 @@ from gateway.types import ChatRequest, Message, StreamEvent
 
 app = FastAPI(title="AI Gateway", version="0.1.0")
 
+# ---------- 日志 & request_id ----------
+# setup_logging 配好 JsonFormatter + 可选文件轮转，根 logger 统一出口。
+# middleware 在每个请求入口生成 request_id，通过 contextvar 让整条调用链
+# （server → gateway → adapter）的日志自动带上同一个 request_id。
+setup_logging()
+import logging as _logging  # noqa: E402  — setup_logging 在顶层配完再取 logger
+logger = _logging.getLogger(__name__)
+
+
+@app.middleware("http")
+async def _request_id_middleware(request: Request, call_next):
+    """每个请求生成 request_id，记录入口/出口日志。"""
+    new_request_id()
+    started = time.monotonic()
+    logger.info(
+        "请求进入",
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "client": request.client.host if request.client else None,
+        },
+    )
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        logger.exception(
+            "请求异常",
+            extra={
+                "path": request.url.path,
+                "method": request.method,
+                "elapsed_ms": round(elapsed_ms, 1),
+            },
+        )
+        raise
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    logger.info(
+        "请求完成",
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "status": response.status_code,
+            "elapsed_ms": round(elapsed_ms, 1),
+        },
+    )
+    return response
+
 # CORS：允许浏览器前端直接调用（生产环境应限制 origins）
 app.add_middleware(
     CORSMiddleware,
@@ -65,6 +115,56 @@ app.add_middleware(
 )
 
 gw = Gateway()
+
+
+# ---------- 全局异常处理：统一错误响应 ----------
+
+@app.exception_handler(GatewayError)
+async def _handle_gateway_error(request: Request, exc: GatewayError) -> JSONResponse:
+    """LLM 调用统一异常 -> HTTP 状态码 + 统一错误体。
+
+    状态码映射见 errors.http_status_for：client 透传上游状态码，
+    network->503，server->502，unexpected->500。
+    上游 Retry-After 头透传（429 限流场景）。
+    """
+    status = http_status_for(exc)
+    # retryable 分档：可重试的（限流/过载/5xx）用 WARNING，否则用 ERROR
+    log_level = _logging.WARNING if exc.retryable else _logging.ERROR
+    logger.log(
+        log_level,
+        "LLM 调用失败",
+        extra={
+            "path": request.url.path,
+            "error_category": exc.category,
+            "error_type": exc.type,
+            "error_status": exc.status_code,
+            "error_message": exc.message,
+            "provider": exc.provider,
+            "request_id_provider": exc.request_id,
+            "retryable": exc.retryable,
+            "retry_after": exc.retry_after,
+        },
+    )
+    headers = {}
+    if exc.retry_after:
+        headers["Retry-After"] = exc.retry_after
+    return JSONResponse(status_code=status, content={"error": exc.to_dict()}, headers=headers)
+
+
+@app.exception_handler(Exception)
+async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+    """未预期异常兜底：包装成 unexpected GatewayError，返回 500 统一体。
+
+    HTTPException/Pydantic 校验等 FastAPI 内置异常不被本 handler 接管
+    （它们有更高优先级的内置 handler）。
+    """
+    logger.exception(
+        "未预期异常",
+        extra={"path": request.url.path, "error_message": str(exc)},
+    )
+    err = from_unexpected(exc)
+    return JSONResponse(status_code=500, content={"error": err.to_dict()})
+
 
 # ---------- Prompt 存储 ----------
 # 介质由 env 决定（PROMPTS_DB_PATH），上层只依赖 PromptStore 协议，换介质换实现类即可
@@ -343,8 +443,13 @@ def chat(req: ChatRequestIn):
 
     if req.stream:
         def generate():
-            for ev in gw.stream(internal_req):
-                yield _event_to_sse(ev)
+            try:
+                for ev in gw.stream(internal_req):
+                    yield _event_to_sse(ev)
+            except Exception as e:
+                # 生成器内未预期异常（理论上 Gateway.stream 已兜底，此处为第二道防线）
+                err = from_unexpected(e, req.model)
+                yield _sse_line("error", {"type": "error", "error": err.to_dict()})
 
         return StreamingResponse(
             generate(),

@@ -4,6 +4,7 @@ from collections.abc import Iterator
 import httpx
 
 from gateway.env import load_env
+from gateway.errors import from_http_response, from_httpx_error
 from gateway.sse import iter_sse
 from gateway.types import ChatRequest, ChatResponse, StreamEvent, Usage
 
@@ -39,12 +40,17 @@ class AnthropicAdapter:
         self.client = httpx.Client(timeout=60.0)
 
     def complete(self, request: ChatRequest) -> ChatResponse:
-        response = self.client.post(
-            self.api_url,
-            headers=self._headers(),
-            json=self._build_payload(request),
-        )
-        response.raise_for_status()
+        try:
+            response = self.client.post(
+                self.api_url,
+                headers=self._headers(),
+                json=self._build_payload(request),
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise from_http_response(e.response, "anthropic", e) from e
+        except httpx.HTTPError as e:
+            raise from_httpx_error(e, "anthropic") from e
         return self._parse_response(
             request.model, response.json(),
             structured=request.response_format is not None,
@@ -80,9 +86,15 @@ class AnthropicAdapter:
                     elif event_name == "message_delta":
                         stop_reason = data.get("delta", {}).get("stop_reason", stop_reason)
                         output_tokens = data.get("usage", {}).get("output_tokens", 0)
+        except httpx.HTTPStatusError as e:
+            # HTTP 头已发出（200），流中途的 HTTP 错误只能以事件形式传递
+            err = from_http_response(e.response, "anthropic", e)
+            yield StreamEvent(type="error", error=err.to_dict())
+            return
         except httpx.HTTPError as e:
-            # HTTP 头可能已发出（200），流中途的错误只能以事件形式传递
-            yield StreamEvent(type="error", error=str(e))
+            # 网络层错误（连接/超时）同样以事件形式传递
+            err = from_httpx_error(e, "anthropic")
+            yield StreamEvent(type="error", error=err.to_dict())
             return
         yield StreamEvent(
             type="done",

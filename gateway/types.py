@@ -53,7 +53,7 @@ class StreamEvent:
     channel: StreamChannel = "text"     # delta: text=正文, reasoning=思考过程（推理模型）
     usage: Usage | None = None          # done: 最终用量
     stop_reason: str | None = None      # done: 统一后的停止原因
-    error: str | None = None            # error: 错误信息
+    error: str | dict[str, Any] | None = None  # error: 错误信息（结构化时为 GatewayError.to_dict()）
     # 计时指标（毫秒），由 Gateway 统一打点，只出现在 done/error 事件上：
     #   ttft_ms    = 发起上游请求 → 收到第一个 delta（text/reasoning 均算首 token）
     #   elapsed_ms = 发起上游请求 → 流结束（done/error）

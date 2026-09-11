@@ -3,6 +3,7 @@ import os
 import httpx
 
 from gateway.env import load_env
+from gateway.errors import from_http_response, from_httpx_error
 from gateway.types import ChatRequest, ChatResponse, Usage
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -34,12 +35,17 @@ class OpenAIAdapter:
         self.client = httpx.Client(timeout=60.0)
 
     def complete(self, request: ChatRequest) -> ChatResponse:
-        response = self.client.post(
-            self.api_url,
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json=self._build_payload(request),
-        )
-        response.raise_for_status()
+        try:
+            response = self.client.post(
+                self.api_url,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=self._build_payload(request),
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise from_http_response(e.response, "openai", e) from e
+        except httpx.HTTPError as e:
+            raise from_httpx_error(e, "openai") from e
         return self._parse_response(request.model, response.json())
 
     def _build_payload(self, request: ChatRequest) -> dict:
