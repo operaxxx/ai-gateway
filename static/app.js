@@ -478,6 +478,10 @@ function buildPayload() {
   const mt = $('#max-tokens').value.trim();
   if (mt !== '') payload.max_tokens = parseInt(mt, 10);
   payload.thinking = $('#thinking-toggle').checked;
+  // 结构化输出：schema 合法性在 validateBeforeSend 统一报错，这里解析失败就忽略
+  if ($('#schema-toggle').checked) {
+    try { payload.response_format = JSON.parse($('#schema-input').value); } catch { /* no-op */ }
+  }
   if ($('#use-prompt').checked && state.editor.mode === 'edit') {
     payload.prompt = {
       id: state.editor.tplId,
@@ -507,7 +511,28 @@ function resetResult() {
   box.classList.remove('has-error');
   $('#reasoning-box').hidden = true;
   $('#reasoning-text').textContent = '';
+  const vb = $('#validation-box');
+  vb.hidden = true;
+  vb.textContent = '';
+  vb.className = '';
   $('#result-meta').textContent = '';
+}
+
+// 结构化输出校验结果展示：通过显示绿条，失败保留流式原文并列出格式错误明细
+function renderValidation(v) {
+  const vb = $('#validation-box');
+  vb.hidden = false;
+  if (v.ok) {
+    vb.className = 'pass';
+    vb.textContent = '✓ JSON Schema 校验通过';
+  } else {
+    vb.className = 'fail';
+    const lines = ['✗ JSON Schema 校验失败：'];
+    for (const e of v.errors || []) {
+      lines.push(`  [${e.field || 'root'}] ${e.type}: ${e.message}`);
+    }
+    vb.textContent = lines.join('\n');
+  }
 }
 
 function renderResultError(text) {
@@ -528,6 +553,12 @@ function renderMeta(m) {
 function validateBeforeSend(payload) {
   if (!payload.model) return '请先选择模型';
   if (!payload.messages[0].content.trim()) return '请输入 user 消息';
+  if ($('#schema-toggle').checked) {
+    if (!$('#schema-input').value.trim()) return '已开启结构化输出，请填写 JSON Schema';
+    try { JSON.parse($('#schema-input').value); } catch (e) {
+      return `JSON Schema 不是合法 JSON: ${e.message}`;
+    }
+  }
   return null;
 }
 
@@ -551,6 +582,7 @@ async function sendChat() {
       max_tokens: payload.max_tokens ?? null,
       stream: payload.stream,
       thinking: payload.thinking,
+      schema: payload.response_format ?? null,
     },
     prompt: payload.prompt ?? null,
     message: payload.messages[0].content,
@@ -589,10 +621,14 @@ async function sendOnce(payload, entry) {
     return;
   }
   const d = r.data;
-  $('#result-text').textContent = d.text ?? '';
+  // 结构化输出模式返回 structured_output 对象，普通模式返回 text
+  const display = d.structured_output != null
+    ? JSON.stringify(d.structured_output, null, 2)
+    : (d.text ?? '');
+  $('#result-text').textContent = display;
   renderMeta({ usage: d.usage, stop_reason: d.stop_reason, elapsed_ms: d.elapsed_ms });
   entry.result = {
-    text: truncate(d.text ?? '', RESULT_SNIPPET),
+    text: truncate(display, RESULT_SNIPPET),
     usage: d.usage ?? null,
     stop_reason: d.stop_reason ?? null,
     ttft_ms: null,
@@ -675,7 +711,19 @@ async function sendStream(payload, entry) {
     stop_reason: doneData?.stop_reason ?? null,
     ttft_ms: doneData?.ttft_ms ?? null,
     elapsed_ms: doneData?.elapsed_ms ?? null,
+    validation: doneData?.validation
+      ? { ok: doneData.validation.ok, errors: doneData.validation.errors ?? null }
+      : null,
   };
+  // 流式结构化输出：done 携带校验结论。通过时用解析结果美化展示（与非流式一致），
+  // 失败时保留流式原文并显示错误明细
+  if (doneData?.validation) {
+    const v = doneData.validation;
+    if (v.ok && v.parsed != null) {
+      $('#result-text').textContent = JSON.stringify(v.parsed, null, 2);
+    }
+    renderValidation(v);
+  }
   setStreamState('done');
 }
 
@@ -789,6 +837,7 @@ function buildCompareCol(h, isFaster) {
     ['max_tokens', h.params?.max_tokens ?? '默认'],
     ['stream', h.params?.stream ? '是' : '否'],
     ['深度思考', h.params?.thinking === undefined ? '默认' : (h.params.thinking ? '开' : '关')],
+    ['结构化', h.params?.schema ? '是' : '否'],
     ['模板', h.prompt ? `${h.prompt.id}@${h.prompt.version}` : '无'],
     ['user 消息', truncate(h.message, 120)],
   ];
@@ -800,6 +849,10 @@ function buildCompareCol(h, isFaster) {
       ['ttft', h.result.ttft_ms != null ? `${h.result.ttft_ms}ms` : '—'],
       ['elapsed', h.result.elapsed_ms != null ? `${h.result.elapsed_ms}ms` : '—'],
     );
+    if (h.params?.schema) {
+      rows.push(['结构化校验',
+        h.result.validation ? (h.result.validation.ok ? '通过' : '失败') : '—']);
+    }
   } else {
     rows.push(['结果', h.result?.error ?? '失败']);
   }
@@ -841,6 +894,10 @@ function bindEvents() {
 
   // 调用
   $('#use-prompt').addEventListener('change', syncPromptRefControls);
+  // 结构化输出与流式可同开：JSON 增量实时透传，done 事件携带 schema 校验结论
+  $('#schema-toggle').addEventListener('change', (e) => {
+    $('#schema-input').hidden = !e.target.checked;
+  });
   $('#btn-render-preview').addEventListener('click', renderPreview);
   $('#btn-send').addEventListener('click', sendChat);
   $('#btn-abort').addEventListener('click', () => {

@@ -138,11 +138,12 @@ class ResponsesAdapter:
         # 深度思考开关：Responses 协议用 reasoning.effort，none=关闭（high 为上游默认档位）
         if request.thinking is not None:
             payload["reasoning"] = {"effort": "high" if request.thinking else "none"}
-        # 结构化输出：用 text.format 指定 JSON Schema
+        # 结构化输出：用 text.format 指定 JSON Schema（json_schema 格式必须带 name）
         if request.response_format is not None:
             payload["text"] = {
                 "format": {
                     "type": "json_schema",
+                    "name": "structured_output",
                     "schema": request.response_format,
                 }
             }

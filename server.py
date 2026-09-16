@@ -16,6 +16,13 @@
   event: error
   data: {"type":"error","error":"消息","elapsed_ms":120.3}
 
+  结构化输出（stream=true + response_format 同开）：delta 仍为 JSON 增量实时透传，
+  done 事件额外携带 validation 字段（流式下无法 422，校验结论随流下发）：
+    event: done
+    data: {"type":"done",...,"validation":{"ok":true,"parsed":{"answer":42}}}
+    data: {"type":"done",...,"validation":{"ok":false,"errors":[
+             {"field":"answer","type":"type_error","message":"期望 integer，得到 string"}]}}
+
   计时字段（毫秒，仅流结束事件携带）：
     ttft_ms    = 网关发起上游请求 → 收到第一个 delta（首 token 延迟）
     elapsed_ms = 网关发起上游请求 → 流结束；非流式 JSON 响应同名字段为总耗时
@@ -25,6 +32,14 @@
   curl http://localhost:8000/v1/chat -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}]}' -H "Content-Type: application/json"
   curl http://localhost:8000/v1/prompts -d '{"id":"translator","name":"翻译","content":"把{{text}}从中文翻译成{{lang}}"}' -H "Content-Type: application/json"
   curl http://localhost:8000/v1/chat -d '{"model":"deepseek-v4-flash","prompt":{"id":"translator","variables":{"text":"你好","lang":"英文"}},"messages":[{"role":"user","content":"请开始"}]}' -H "Content-Type: application/json"
+
+可靠性配置（环境变量，均有默认值，详见 gateway/retry.py 与 gateway/ratelimit.py）:
+  RETRY_MAX_ATTEMPTS / RETRY_BACKOFF_BASE_S / RETRY_BACKOFF_MAX_S
+      上游重试：retryable 错误（network/server/429/409）指数退避重试，默认 3 次尝试
+  RATE_LIMIT_RPM / RATE_LIMIT_WINDOW_S
+      限流：per 客户端 IP 滑动窗口（默认禁用），超限 429 + Retry-After
+  GET /v1/metrics
+      运行指标快照：请求/错误/限流/重试计数 + 延迟分位数（JSON）
 """
 
 import json
@@ -40,9 +55,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from gateway.env import load_env
+from gateway import metrics
 from gateway.errors import GatewayError, from_unexpected, http_status_for
 from gateway.gateway import Gateway, MODEL_ROUTES, StructuredOutputError
 from gateway.logger_setup import new_request_id, setup_logging
+from gateway.ratelimit import from_env as ratelimit_from_env
 from gateway.prompt_render import (
     InvalidTemplateError,
     MissingVariablesError,
@@ -71,35 +88,83 @@ logger = _logging.getLogger(__name__)
 
 @app.middleware("http")
 async def _request_id_middleware(request: Request, call_next):
-    """每个请求生成 request_id，记录入口/出口日志。"""
+    """每个请求生成 request_id，做限流检查，记录入口/出口日志与指标。
+
+    指标统计范围：/v1/* 业务请求（/v1/metrics 自身与 /health 探活不计入，
+    避免监控自噪声）。限流同样只作用于 /v1/*（RATE_LIMIT_RPM 未配置时禁用）。
+    """
     new_request_id()
     started = time.monotonic()
+    path = request.url.path
+    monitored = path.startswith("/v1/") and path != "/v1/metrics"
     logger.info(
         "请求进入",
         extra={
-            "path": request.url.path,
+            "path": path,
             "method": request.method,
             "client": request.client.host if request.client else None,
         },
     )
+    # ---- 限流检查（滑动窗口，per 客户端 IP；未配置则跳过） ----
+    if monitored and limiter is not None:
+        client_ip = request.client.host if request.client else "unknown"
+        allowed, retry_after = limiter.check(client_ip)
+        if not allowed:
+            elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+            metrics.inc("requests_total")
+            metrics.inc("errors_total")
+            metrics.inc("rate_limited_total")
+            metrics.inc_status(429)
+            metrics.observe_http_latency(elapsed_ms)
+            logger.warning(
+                "请求被限流",
+                extra={
+                    "path": path,
+                    "client": client_ip,
+                    "elapsed_ms": elapsed_ms,
+                    "retry_after_s": retry_after,
+                    "limit": limiter.limit,
+                    "window_s": limiter.window_s,
+                },
+            )
+            return JSONResponse(
+                status_code=429,
+                content={"error": {
+                    "category": "rate_limited",
+                    "type": "rate_limit_error",
+                    "message": f"请求过于频繁（限流 {limiter.limit} 次/{limiter.window_s:g}s 窗口），请稍后重试",
+                    "retryable": True,
+                }},
+                headers={"Retry-After": str(int(retry_after))},
+            )
     try:
         response = await call_next(request)
     except Exception:
         elapsed_ms = (time.monotonic() - started) * 1000.0
+        if monitored:
+            metrics.inc("requests_total")
+            metrics.inc("errors_total")
+            metrics.observe_http_latency(elapsed_ms)
         logger.exception(
             "请求异常",
             extra={
-                "path": request.url.path,
+                "path": path,
                 "method": request.method,
                 "elapsed_ms": round(elapsed_ms, 1),
             },
         )
         raise
     elapsed_ms = (time.monotonic() - started) * 1000.0
+    if monitored:
+        metrics.inc("requests_total")
+        metrics.inc_status(response.status_code)
+        if response.status_code >= 400:
+            metrics.inc("errors_total")
+        metrics.observe_http_latency(elapsed_ms)
     logger.info(
         "请求完成",
         extra={
-            "path": request.url.path,
+            "path": path,
             "method": request.method,
             "status": response.status_code,
             "elapsed_ms": round(elapsed_ms, 1),
@@ -171,6 +236,9 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
 # 介质由 env 决定（PROMPTS_DB_PATH），上层只依赖 PromptStore 协议，换介质换实现类即可
 load_env()
 store: PromptStore = SqlitePromptStore(os.environ.get("PROMPTS_DB_PATH", "prompts.db"))
+
+# 限流器：RATE_LIMIT_RPM 未设置或为 0 时为 None（禁用）
+limiter = ratelimit_from_env()
 
 # prompt id 规则：小写字母/数字开头，可含 - _（作为 slug 出现在 URL 和引用里）
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -266,12 +334,29 @@ def _event_to_sse(ev: StreamEvent) -> str:
                 "input_tokens": ev.usage.input_tokens,
                 "output_tokens": ev.usage.output_tokens,
             }
-        return _sse_line("done", {
+        data = {
             "type": "done",
             "usage": usage,
             "stop_reason": ev.stop_reason,
             **_timing_fields(ev),
-        })
+        }
+        # 流式结构化输出：Gateway 在流结束后对累积正文跑过 schema 校验，
+        # 结论随 done 下发（ok=true 带 parsed，ok=false 带 errors 明细）
+        if ev.structured_ok is not None:
+            validation = {"ok": ev.structured_ok}
+            if ev.structured_ok:
+                validation["parsed"] = ev.structured_parsed
+            else:
+                validation["errors"] = [
+                    {
+                        "field": ".".join(str(x) for x in e.get("loc", ())) or "root",
+                        "type": e.get("type", ""),
+                        "message": e.get("message", ""),
+                    }
+                    for e in (ev.structured_errors or [])
+                ]
+            data["validation"] = validation
+        return _sse_line("done", data)
     if ev.type == "error":
         return _sse_line("error", {
             "type": "error",
@@ -307,6 +392,17 @@ def list_models():
             for model, adapter in MODEL_ROUTES.items()
         ]
     }
+
+
+@app.get("/v1/metrics")
+def get_metrics():
+    """运行指标快照（JSON 版 Prometheus）：计数器 + 状态码分布 + 延迟分位数。
+
+    统计范围：/v1/* 业务请求（本端点自身与 /health 不计入）。
+    延迟双层口径：http_latency（中间件）与 llm_latency（Gateway 上游往返）；
+    流式请求的 http_latency 为响应头就绪耗时，完整时长看 llm_latency。
+    """
+    return metrics.snapshot()
 
 
 # ---------- Prompt 管理 ----------
@@ -433,13 +529,6 @@ def chat(req: ChatRequestIn):
         raise HTTPException(
             400,
             f"不支持的模型: {req.model}，支持: {list(MODEL_ROUTES.keys())}",
-        )
-
-    # v1 不支持流式 + 结构化输出组合（JSON 流片段无法解析）
-    if req.stream and req.response_format is not None:
-        raise HTTPException(
-            400,
-            "stream=true 与 response_format 不兼容：JSON 流的增量片段无法解析，请使用非流式模式",
         )
 
     # prompt 引用解析：渲染失败快速报错，不把残缺 prompt 发给 LLM

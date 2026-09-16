@@ -62,3 +62,11 @@ class StreamEvent:
     #   elapsed_ms = 发起上游请求 → 流结束（done/error）
     ttft_ms: float | None = None
     elapsed_ms: float | None = None
+    # done 事件附带（仅 response_format 非空时）：流结束后 Gateway 对累积正文的
+    # JSON Schema 校验结果。流式下无法用 422 报错，校验结论随 done 事件下发：
+    #   structured_ok      = True 校验通过 / False 失败 / None 未启用结构化
+    #   structured_parsed  = 通过时的解析对象
+    #   structured_errors  = 失败时的错误列表 [{"loc": tuple, "type": str, "message": str}]
+    structured_ok: bool | None = None
+    structured_parsed: Any | None = None
+    structured_errors: list[dict[str, Any]] | None = None

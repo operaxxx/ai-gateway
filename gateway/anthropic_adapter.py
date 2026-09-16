@@ -57,9 +57,16 @@ class AnthropicAdapter:
         )
 
     def stream(self, request: ChatRequest) -> Iterator[StreamEvent]:
-        """流式请求：把上游 SSE 翻译成统一 StreamEvent，边收边 yield（中继模式）。"""
+        """流式请求：把上游 SSE 翻译成统一 StreamEvent，边收边 yield（中继模式）。
+
+        结构化输出（response_format 非空）时上游走 tool_use：JSON 参数以
+        input_json_delta 增量到达，翻译成正文 delta 实时透传（流式 JSON 可直接
+        展示，累积后由 Gateway 校验）；普通 text_delta 抑制不透传——与
+        complete() 的结构化解析口径一致（只取 tool 入参，忽略正文）。
+        """
         payload = self._build_payload(request)
         payload["stream"] = True
+        structured = request.response_format is not None
         input_tokens = 0
         output_tokens = 0
         stop_reason = "stop"
@@ -87,7 +94,13 @@ class AnthropicAdapter:
                         delta = data.get("delta", {})
                         dtype = delta.get("type")
                         if dtype == "text_delta":
-                            yield StreamEvent(type="delta", text=delta.get("text", ""))
+                            # 结构化模式抑制普通文本（与 complete() 只取 tool 入参一致）
+                            if not structured:
+                                yield StreamEvent(type="delta", text=delta.get("text", ""))
+                        elif dtype == "input_json_delta":
+                            # 结构化输出：tool 入参 JSON 增量 -> 正文 delta（流式透传）
+                            if structured:
+                                yield StreamEvent(type="delta", text=delta.get("partial_json", ""))
                         elif dtype == "thinking_delta":
                             # 扩展思考模式下的思考增量
                             yield StreamEvent(type="delta", text=delta.get("thinking", ""), channel="reasoning")

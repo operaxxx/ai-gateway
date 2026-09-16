@@ -82,6 +82,15 @@
 
         <textarea id="user-message" rows="4" placeholder="输入 user 消息…"></textarea>
 
+        <div id="schema-ref">
+          <label class="switch">
+            <input id="schema-toggle" type="checkbox">
+            <span>结构化输出（JSON Schema，流式结束后校验）</span>
+          </label>
+          <textarea id="schema-input" rows="6" hidden
+            placeholder='{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"]}'></textarea>
+        </div>
+
         <div id="chat-actions">
           <button id="btn-send">发送</button>
           <button id="btn-abort" class="danger" hidden>停止</button>
@@ -93,6 +102,7 @@
             <pre id="reasoning-text" class="pre-box"></pre>
           </details>
           <pre id="result-text" class="pre-box" placeholder="">调用结果将显示在这里</pre>
+          <div id="validation-box" hidden></div>
           <div id="result-meta" class="meta"></div>
         </div>
       </section>

@@ -18,5 +18,8 @@ prompts.db
 prompts.db-wal
 prompts.db-shm
 
+# Verification reports and logs (scripts/verification)
+scripts/verification/reports/
+
 # ide
 .trae/
