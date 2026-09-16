@@ -183,6 +183,23 @@ class TestSqlitePromptStore:
     def test_list_versions_missing_prompt_empty(self, store):
         assert store.list_versions("nope") == []
 
+    def test_delete_removes_meta_and_versions(self, store):
+        store.create_prompt("t1", "测试", "", "v1 {{x}}", ["x"])
+        store.add_version("t1", "v2", [])
+        store.delete_prompt("t1")
+        assert store.get_prompt("t1") is None
+        assert store.list_versions("t1") == []
+
+    def test_delete_missing_raises(self, store):
+        with pytest.raises(PromptNotFoundError):
+            store.delete_prompt("nope")
+
+    def test_delete_then_recreate_starts_from_v1(self, store):
+        store.create_prompt("t1", "测试", "", "v1", [])
+        store.add_version("t1", "v2", [])
+        store.delete_prompt("t1")
+        assert store.create_prompt("t1", "重建", "", "新内容", []) == 1
+
     def test_list_prompts(self, store):
         assert store.list_prompts() == []
         store.create_prompt("a", "A", "", "c", [])

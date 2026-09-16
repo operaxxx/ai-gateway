@@ -35,7 +35,8 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from gateway.env import load_env
@@ -216,6 +217,7 @@ class ChatRequestIn(BaseModel):
     stream: bool = False
     response_format: dict | None = None   # JSON Schema，None=自由输出
     prompt: PromptRefIn | None = None     # 提供时渲染为 system 消息插到最前
+    thinking: bool | None = None          # 深度思考开关，None=跟随上游默认
 
 
 def _to_internal(req: ChatRequestIn, messages: list[MessageIn]) -> ChatRequest:
@@ -226,6 +228,7 @@ def _to_internal(req: ChatRequestIn, messages: list[MessageIn]) -> ChatRequest:
         max_tokens=req.max_tokens,
         temperature=req.temperature,
         response_format=req.response_format,
+        thinking=req.thinking,
     )
 
 
@@ -279,6 +282,16 @@ def _event_to_sse(ev: StreamEvent) -> str:
 
 
 # ---------- 路由 ----------
+
+# 管理控制台（纯静态三件套，无构建步骤）；目录定位用 __file__，与启动 cwd 无关
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    """管理控制台首页。"""
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
 
 @app.get("/health")
 def health():
@@ -398,6 +411,15 @@ def render_prompt(prompt_id: str, req: PromptRenderIn):
     return {"id": prompt_id, "version": ver.version, "rendered": rendered}
 
 
+@app.delete("/v1/prompts/{prompt_id}", status_code=204)
+def delete_prompt(prompt_id: str):
+    """删除 prompt 及全部版本历史。不存在返回 404。"""
+    try:
+        store.delete_prompt(prompt_id)
+    except PromptNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
 @app.post("/v1/chat")
 def chat(req: ChatRequestIn):
     """统一聊天接口。
@@ -506,3 +528,7 @@ def chat(req: ChatRequestIn):
         "stop_reason": resp.stop_reason,
         "elapsed_ms": elapsed_ms,
     }
+
+
+# 静态资源挂载放最后（所有 API 路由之后）：前缀 /static 提供 js/css，不与 /v1/*、/health 冲突
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

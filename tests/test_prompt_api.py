@@ -149,6 +149,19 @@ class TestPromptEndpoints:
         })
         assert resp.json()["rendered"] == "把hi从中文翻译成en"
 
+    def test_delete_prompt_204(self, client):
+        c, _ = client
+        _create_translator(c)
+        resp = c.delete("/v1/prompts/translator")
+        assert resp.status_code == 204
+        assert resp.content == b""
+        assert c.get("/v1/prompts/translator").status_code == 404
+        assert c.get("/v1/prompts").json()["prompts"] == []
+
+    def test_delete_missing_404(self, client):
+        c, _ = client
+        assert c.delete("/v1/prompts/nope").status_code == 404
+
 
 # ---------- /v1/chat 集成 ----------
 

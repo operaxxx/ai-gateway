@@ -70,7 +70,15 @@ class AnthropicAdapter:
                 headers=self._headers(),
                 json=payload,
             ) as response:
-                response.raise_for_status()
+                if response.is_error:
+                    # 流式响应体未读，必须在 with 块内 read 后才能解析错误 JSON
+                    # （with 外访问 .json() 会抛 httpx.ResponseNotRead）
+                    response.read()
+                    yield StreamEvent(
+                        type="error",
+                        error=from_http_response(response, "anthropic").to_dict(),
+                    )
+                    return
                 for event_name, data in iter_sse(response):
                     if event_name == "message_start":
                         input_tokens = data.get("message", {}).get("usage", {}).get("input_tokens", 0)
@@ -86,13 +94,8 @@ class AnthropicAdapter:
                     elif event_name == "message_delta":
                         stop_reason = data.get("delta", {}).get("stop_reason", stop_reason)
                         output_tokens = data.get("usage", {}).get("output_tokens", 0)
-        except httpx.HTTPStatusError as e:
-            # HTTP 头已发出（200），流中途的 HTTP 错误只能以事件形式传递
-            err = from_http_response(e.response, "anthropic", e)
-            yield StreamEvent(type="error", error=err.to_dict())
-            return
         except httpx.HTTPError as e:
-            # 网络层错误（连接/超时）同样以事件形式传递
+            # 网络层错误（连接/超时）以事件形式传递
             err = from_httpx_error(e, "anthropic")
             yield StreamEvent(type="error", error=err.to_dict())
             return
@@ -126,6 +129,9 @@ class AnthropicAdapter:
             payload["system"] = "\n\n".join(system_texts)
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        # 深度思考开关：Anthropic 协议用 thinking.type（DeepSeek 忽略 budget_tokens，不传）
+        if request.thinking is not None:
+            payload["thinking"] = {"type": "enabled" if request.thinking else "disabled"}
         # 结构化输出：用 tool_use 模式（不带 tool_choice，DeepSeek thinking 模式不支持强制 tool_choice）
         if request.response_format is not None:
             payload["tools"] = [{

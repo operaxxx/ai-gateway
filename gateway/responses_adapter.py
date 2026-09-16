@@ -75,7 +75,15 @@ class ResponsesAdapter:
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json=payload,
             ) as response:
-                response.raise_for_status()
+                if response.is_error:
+                    # 流式响应体未读，必须在 with 块内 read 后才能解析错误 JSON
+                    # （with 外访问 .json() 会抛 httpx.ResponseNotRead）
+                    response.read()
+                    yield StreamEvent(
+                        type="error",
+                        error=from_http_response(response, "openai").to_dict(),
+                    )
+                    return
                 for event_name, data in iter_sse(response):
                     if event_name == "response.created":
                         yield StreamEvent(type="start")
@@ -99,11 +107,6 @@ class ResponsesAdapter:
                             resp.get("status", "completed"),
                             (resp.get("incomplete_details") or {}).get("reason"),
                         )
-        except httpx.HTTPStatusError as e:
-            # HTTP 头已发出（200），流中途的 HTTP 错误只能以事件形式传递
-            err = from_http_response(e.response, "openai", e)
-            yield StreamEvent(type="error", error=err.to_dict())
-            return
         except httpx.HTTPError as e:
             # 网络层错误（连接/超时）同样以事件形式传递
             err = from_httpx_error(e, "openai")
@@ -132,6 +135,9 @@ class ResponsesAdapter:
             payload["max_output_tokens"] = request.max_tokens
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        # 深度思考开关：Responses 协议用 reasoning.effort，none=关闭（high 为上游默认档位）
+        if request.thinking is not None:
+            payload["reasoning"] = {"effort": "high" if request.thinking else "none"}
         # 结构化输出：用 text.format 指定 JSON Schema
         if request.response_format is not None:
             payload["text"] = {

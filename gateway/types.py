@@ -15,6 +15,9 @@ class ChatRequest:
     max_tokens: int | None = None
     temperature: float | None = None
     response_format: dict | None = None   # JSON Schema 字典，None=自由输出
+    # 深度思考开关：True=强制开启，False=强制关闭，None=跟随上游默认（DeepSeek 默认开启）
+    # 由各适配器按上游协议翻译（Anthropic: thinking.type / Responses: reasoning.effort）
+    thinking: bool | None = None
 
 @dataclass(slots=True)
 class Usage:

@@ -75,7 +75,7 @@ class Gateway:
             raise
         except Exception as e:
             elapsed_ms = (time.monotonic() - started) * 1000.0
-            logger.error(
+            logger.exception(
                 "complete 未预期异常",
                 extra={
                     "model": request.model,
@@ -196,7 +196,7 @@ class Gateway:
             yield self._error_event(e, started, ttft_ms)
         except Exception as e:
             elapsed_ms = (time.monotonic() - started) * 1000.0
-            logger.error(
+            logger.exception(
                 "stream 未预期异常",
                 extra={
                     "model": request.model,

@@ -79,6 +79,10 @@ class PromptStore(Protocol):
         """列出版本历史（新版本在前）。prompt 不存在返回空列表。"""
         ...
 
+    def delete_prompt(self, prompt_id: str) -> None:
+        """删除 prompt 及其全部版本。不存在时抛 PromptNotFoundError。"""
+        ...
+
 
 # ---------- SQLite 实现 ----------
 
@@ -218,6 +222,15 @@ class SqlitePromptStore:
                 (prompt_id,),
             ).fetchall()
         return [self._to_version(r) for r in rows]
+
+    def delete_prompt(self, prompt_id: str) -> None:
+        # 外键无级联且 foreign_keys=ON：必须先删子表（prompt_versions）再删主表，
+        # 两步在同一连接事务内；不存在时子表为空操作、主表 rowcount=0 抛异常
+        with self._connect() as conn:
+            conn.execute("DELETE FROM prompt_versions WHERE prompt_id = ?", (prompt_id,))
+            cur = conn.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
+            if cur.rowcount == 0:
+                raise PromptNotFoundError(f"prompt 不存在: {prompt_id!r}")
 
     @staticmethod
     def _to_version(row: sqlite3.Row) -> PromptVersion:

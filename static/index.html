@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Gateway 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- 顶栏：模型选择 / 参数 / 流式开关 / 状态灯 -->
+  <header id="topbar">
+    <h1>AI Gateway 控制台</h1>
+    <label class="field">模型
+      <select id="model-select"><option value="">加载中…</option></select>
+    </label>
+    <label class="field">temperature
+      <input id="temperature" type="number" min="0" max="2" step="0.1" placeholder="默认">
+    </label>
+    <label class="field">max_tokens
+      <input id="max-tokens" type="number" min="1" step="1" placeholder="默认">
+    </label>
+    <label class="switch">
+      <input id="stream-toggle" type="checkbox">
+      <span>流式输出</span>
+    </label>
+    <label class="switch">
+      <input id="thinking-toggle" type="checkbox" checked>
+      <span>深度思考</span>
+    </label>
+    <span id="stream-status-wrap" class="status-wrap">
+      <span id="stream-status" class="dot idle" title="空闲"></span>
+      <span id="stream-status-text">空闲</span>
+    </span>
+    <button id="btn-clear-logs" class="ghost">清空日志</button>
+  </header>
+
+  <main>
+    <!-- 左栏：模板设置 -->
+    <section id="panel-templates">
+      <h2>模板设置</h2>
+      <input id="tpl-search" type="search" placeholder="搜索模板（id / 名称）…">
+      <ul id="tpl-list" class="tpl-list"></ul>
+
+      <div id="tpl-editor">
+        <!-- 新建模式字段 -->
+        <div id="tpl-new-fields" class="field-col" hidden>
+          <input id="tpl-id" placeholder="id（slug，创建后不可改，如 translator）">
+          <input id="tpl-name" placeholder="名称">
+          <input id="tpl-desc" placeholder="描述（可选）">
+        </div>
+        <!-- 编辑模式元信息 -->
+        <div id="tpl-edit-meta" class="edit-meta" hidden>
+          <span id="tpl-edit-title" class="edit-title"></span>
+          <select id="tpl-version-select" title="查看历史版本（旧版本只读）"></select>
+        </div>
+        <p id="tpl-version-hint" class="hint" hidden></p>
+        <textarea id="tpl-content" rows="10"
+          placeholder="Jinja2 模板：&#123;&#123;var&#125;&#125; 占位，支持 &#123;% if %&#125;、&#123;% for %&#125;、&#123;&#123; v | default(&quot;兜底&quot;) &#125;&#125;"></textarea>
+        <div id="tpl-actions">
+          <button id="btn-tpl-save">保存</button>
+          <button id="btn-tpl-new" class="ghost">新建模板</button>
+          <button id="btn-tpl-delete" class="danger" hidden>删除模板</button>
+        </div>
+        <p id="tpl-msg" class="msg" hidden></p>
+      </div>
+    </section>
+
+    <!-- 右栏：调用区 + 历史区 -->
+    <div id="right-col">
+      <section id="panel-playground">
+        <h2>调用</h2>
+
+        <div id="prompt-ref">
+          <label class="switch">
+            <input id="use-prompt" type="checkbox">
+            <span>引用模板作为 system 消息</span>
+          </label>
+          <div id="variable-form" class="field-col" hidden></div>
+          <button id="btn-render-preview" class="ghost" hidden>渲染预览</button>
+          <pre id="render-preview" class="pre-box" hidden></pre>
+        </div>
+
+        <textarea id="user-message" rows="4" placeholder="输入 user 消息…"></textarea>
+
+        <div id="chat-actions">
+          <button id="btn-send">发送</button>
+          <button id="btn-abort" class="danger" hidden>停止</button>
+        </div>
+
+        <div id="result">
+          <details id="reasoning-box" hidden>
+            <summary>思考过程（reasoning）</summary>
+            <pre id="reasoning-text" class="pre-box"></pre>
+          </details>
+          <pre id="result-text" class="pre-box" placeholder="">调用结果将显示在这里</pre>
+          <div id="result-meta" class="meta"></div>
+        </div>
+      </section>
+
+      <section id="panel-history">
+        <h2>历史结果
+          <button id="btn-compare" disabled>对比所选（0/2）</button>
+          <button id="btn-clear-history" class="ghost">清空历史</button>
+        </h2>
+        <ul id="history-list" class="history-list"></ul>
+      </section>
+    </div>
+  </main>
+
+  <!-- 底部日志抽屉 -->
+  <section id="panel-logs" class="collapsed">
+    <header id="logs-bar">
+      <h2>调用日志 <span id="logs-count" class="count"></span></h2>
+      <span id="logs-toggle" class="toggle">展开 ▲</span>
+    </header>
+    <ul id="log-list" class="log-list"></ul>
+  </section>
+
+  <!-- 对比弹窗 -->
+  <dialog id="compare-dialog">
+    <div id="compare-body" class="compare-grid"></div>
+    <div class="dialog-footer">
+      <button id="btn-close-compare" class="ghost">关闭</button>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
