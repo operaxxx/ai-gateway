@@ -149,7 +149,6 @@ def main():
 
     # 4b. 翻译函数是纯函数，直接单测（无需任何 HTTP mock）
     from gateway.anthropic_adapter import _normalize_stop_reason as anth_norm
-    from gateway.openai_adapter import _normalize_stop_reason as cc_norm
     from gateway.responses_adapter import _normalize_stop_reason as resp_norm
 
     assert anth_norm("end_turn") == "stop"
@@ -165,10 +164,7 @@ def main():
     assert resp_norm("failed", None) == "error"
     assert resp_norm("incomplete", "brand_new") == "incomplete"  # 未知 reason 兜底
 
-    assert cc_norm("stop") == "stop"
-    assert cc_norm("length") == "max_tokens"
-
-    print("[PASS] stop_reason 翻译函数单测通过（3 个适配器 × 全词表）")
+    print("[PASS] stop_reason 翻译函数单测通过（2 个适配器 × 全词表）")
 
     # 5. 错误路径：上游 500 -> error 事件（而不是抛异常打断消费方）
     a_err = AnthropicAdapter(api_key="test")

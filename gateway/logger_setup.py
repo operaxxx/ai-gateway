@@ -106,16 +106,6 @@ def _inject_extra(entry: dict, record: logging.LogRecord) -> None:
         entry[key] = value
 
 
-# ---------- LogRecord 清洗 Filter ----------
-
-class RecordFilter(logging.Filter):
-    """确保缺失的 LLM 领域字段有兜底（通过 _inject_extra 的 None 跳过机制
-    实际上已经不需要了，这里保留做未来扩展——比如对特定字段做强类型校验）。"""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        return True
-
-
 # ---------- setup_logging ----------
 
 def setup_logging(
@@ -151,12 +141,10 @@ def setup_logging(
     root.setLevel(getattr(logging, level, logging.INFO))
 
     formatter = JsonFormatter(service=service, env=env)
-    flt = RecordFilter()
 
     # —— stdout handler（所有部署形态都需要，Docker/OTel Collector 从这里抓）
     stdout = logging.StreamHandler(sys.stdout)
     stdout.setFormatter(formatter)
-    stdout.addFilter(flt)
     root.addHandler(stdout)
 
     # —— 可选文件 handler（本地备份；生产用 OTel Collector 从 stdout 抓即可不依赖）
@@ -170,7 +158,6 @@ def setup_logging(
             encoding="utf-8",
         )
         file_handler.setFormatter(formatter)
-        file_handler.addFilter(flt)
         root.addHandler(file_handler)
 
     # —— 第三方库降噪（uvicorn.access / httpx INFO 太吵）

@@ -66,6 +66,7 @@ from gateway.prompt_render import (
     extract_variables,
     render,
 )
+from gateway.structured_output import find_unsupported_keywords
 from gateway.prompt_store import (
     PromptAlreadyExistsError,
     PromptNotFoundError,
@@ -531,6 +532,23 @@ def chat(req: ChatRequestIn):
             f"不支持的模型: {req.model}，支持: {list(MODEL_ROUTES.keys())}",
         )
 
+    # 结构化输出 schema 预检（fail fast）：含不支持的关键字直接 400，
+    # 不发起 LLM 调用——避免上游返回后才校验失败，浪费一次调用
+    if req.response_format is not None:
+        unsupported = find_unsupported_keywords(req.response_format)
+        if unsupported:
+            raise HTTPException(400, detail={
+                "error": "unsupported_schema",
+                "message": "response_format 含校验器不支持的关键字/形式，已拒绝（fail fast，避免静默漏校验）",
+                "unsupported": [
+                    {
+                        "field": ".".join(str(x) for x in e.loc) or "root",
+                        "message": e.message,
+                    }
+                    for e in unsupported
+                ],
+            })
+
     # prompt 引用解析：渲染失败快速报错，不把残缺 prompt 发给 LLM
     messages_in = req.messages
     if req.prompt is not None:
@@ -558,8 +576,9 @@ def chat(req: ChatRequestIn):
                 for ev in gw.stream(internal_req):
                     yield _event_to_sse(ev)
             except Exception as e:
-                # 生成器内未预期异常（理论上 Gateway.stream 已兜底，此处为第二道防线）
-                err = from_unexpected(e, req.model)
+                # 生成器内未预期异常（理论上 Gateway.stream 已兜底，此处为第二道防线；
+                # HTTP 层不知道 provider，留空——to_dict 对空 provider 不输出该字段）
+                err = from_unexpected(e)
                 yield _sse_line("error", {"type": "error", "error": err.to_dict()})
 
         return StreamingResponse(

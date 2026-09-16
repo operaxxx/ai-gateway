@@ -16,7 +16,7 @@ import json
 import httpx
 from fastapi.testclient import TestClient
 
-from gateway.structured_output import extract_json, validate
+from gateway.structured_output import extract_json, find_unsupported_keywords, validate
 from gateway.anthropic_adapter import AnthropicAdapter
 from gateway.responses_adapter import ResponsesAdapter
 from gateway.gateway import Gateway
@@ -215,6 +215,68 @@ class TestValidate:
         assert len(type_errors) == 1
 
 
+# ---------- Schema 边界 fail-fast 检测（不支持的关键字绝不静默漏校验） ----------
+
+class TestSchemaBoundary:
+    def test_unsupported_keyword_rejected(self):
+        """顶层出现不支持关键字（oneOf）：validate 直接失败，type=unsupported_schema_keyword"""
+        schema = {
+            "oneOf": [{"type": "string"}, {"type": "integer"}],
+        }
+        result = validate('"anything"', schema)
+        assert not result.ok
+        assert result.errors[0].type == "unsupported_schema_keyword"
+        assert "oneOf" in result.errors[0].message
+
+    def test_unsupported_keyword_in_nested_properties(self):
+        """嵌套 properties 深处的不支持关键字也能被定位"""
+        schema = {
+            "type": "object",
+            "properties": {
+                "ok_field": {"type": "string"},
+                "bad_field": {"type": "string", "pattern": "^a"},
+            },
+        }
+        errors = find_unsupported_keywords(schema)
+        assert len(errors) == 1
+        assert errors[0].loc == ("properties", "bad_field", "pattern")
+
+    def test_type_array_form_rejected(self):
+        """type 数组形式（type: ["string", "null"]）会静默漏校验，必须拦截"""
+        schema = {"type": ["string", "null"]}
+        errors = find_unsupported_keywords(schema)
+        assert len(errors) == 1
+        assert errors[0].loc == ("type",)
+
+    def test_items_array_form_rejected(self):
+        """items 数组形式（按位置元组校验）未实现，必须拦截"""
+        schema = {"type": "array", "items": [{"type": "string"}, {"type": "integer"}]}
+        errors = find_unsupported_keywords(schema)
+        assert len(errors) == 1
+        assert errors[0].loc == ("items",)
+
+    def test_supported_schema_passes_boundary(self):
+        """全部在支持范围内的 schema 不报任何边界错误"""
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "age": {"type": "integer", "minimum": 0},
+                "tags": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        }
+        assert find_unsupported_keywords(schema) == []
+
+    def test_validate_preflight_blocks_before_json_check(self):
+        """validate() 入口先查边界：即便正文是合法 JSON，坏 schema 也报 unsupported 而非解析成功"""
+        schema = {"type": "object", "format": "uri", "properties": {}}
+        result = validate("{}", schema)
+        assert not result.ok
+        assert all(e.type == "unsupported_schema_keyword" for e in result.errors)
+
+
 # ---------- 适配器 payload 翻译测试（纯函数，防上游协议字段回归） ----------
 
 class TestAdapterPayload:
@@ -256,6 +318,21 @@ class TestHttpLayer:
             "messages": [{"role": "user", "content": "hi"}],
         })
         assert resp.status_code == 400
+
+    def test_unsupported_schema_preflight_returns_400(self):
+        """schema 含不支持关键字：入口 400（fail fast），不发起 LLM 调用"""
+        resp = self.client.post("/v1/chat", json={
+            "model": "deepseek-v4-flash",
+            "messages": [{"role": "user", "content": "hi"}],
+            "response_format": {
+                "type": "object",
+                "properties": {"q": {"type": "string", "pattern": "^a"}},
+            },
+        })
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["detail"]["error"] == "unsupported_schema"
+        assert body["detail"]["unsupported"][0]["field"] == "properties.q.pattern"
 
 
 # ---------- 流式 + 结构化输出：JSON 增量实时透传，流结束后校验 ----------

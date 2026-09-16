@@ -2,10 +2,15 @@
 
 职责：
 1. 从 LLM 返回的文本中容错提取 JSON
-2. 用 pydantic 按 JSON Schema 校验
+2. 用自研轻量校验器按 JSON Schema 校验（不引入额外依赖）
 3. 返回结构化错误信息（原因 + 字段路径 + 建议）
 
 不负责约束 LLM 输出（那是 adapter 层的事），只做解析和校验。
+
+支持边界（fail-fast 原则）：校验器只覆盖常用关键字（见 _validate_against_schema）。
+schema 出现不支持的关键字时，find_unsupported_keywords 会显式报错而不是静默忽略——
+"校验通过但约束未检查"比报错更危险。validate() 入口强制检测；HTTP 层
+（server.py /v1/chat）在调用 LLM 前预先检测，把不合法 schema 挡在请求之前。
 """
 
 import json
@@ -86,6 +91,71 @@ def _extract_by_brackets(text: str) -> str | None:
     return None
 
 
+# ---------- Schema 边界检测（fail-fast） ----------
+
+# 校验器不支持、出现即报错的 JSON Schema 关键字。
+# 覆盖范围 = _validate_against_schema 实际实现的全部关键字之外的部分。
+_UNSUPPORTED_KEYWORDS = frozenset({
+    "allOf", "anyOf", "oneOf", "not",                       # 组合
+    "$ref", "$defs", "definitions",                         # 引用
+    "pattern", "format",                                    # 字符串
+    "multipleOf", "exclusiveMinimum", "exclusiveMaximum",   # 数值
+    "prefixItems", "contains", "minContains", "maxContains",
+    "uniqueItems",                                          # 数组
+    "patternProperties", "propertyNames",
+    "minProperties", "maxProperties",
+    "dependentRequired", "dependencies",                    # 对象
+    "const", "if", "then", "else",                          # 其他
+})
+
+
+def find_unsupported_keywords(schema: dict, path: tuple = ()) -> list[FieldError]:
+    """静态扫描 schema，返回出现不支持关键字/形式的错误列表。
+
+    - 逐个关键字 + 递归 properties/items/additionalProperties 子 schema
+    - 同时拦截两种"形似支持实则会漏"的写法：type 数组形式、items 数组形式
+    - validate() 入口强制调用；HTTP 层在调用 LLM 前预检
+    """
+    errors: list[FieldError] = []
+    for key in schema:
+        if key in _UNSUPPORTED_KEYWORDS:
+            errors.append(FieldError(
+                loc=path + (key,),
+                type="unsupported_schema_keyword",
+                message=f"Schema 使用了校验器不支持的关键字 {key!r}，为避免静默漏校验已拒绝",
+            ))
+    if isinstance(schema.get("type"), list):
+        errors.append(FieldError(
+            loc=path + ("type",),
+            type="unsupported_schema_keyword",
+            message='type 不支持数组形式（如 ["string", "null"]），请使用单一类型',
+        ))
+    if isinstance(schema.get("items"), list):
+        errors.append(FieldError(
+            loc=path + ("items",),
+            type="unsupported_schema_keyword",
+            message="items 不支持数组形式（按位置元组校验），请使用单一 schema 对象",
+        ))
+    for sub_path, sub in _iter_sub_schemas(schema):
+        errors.extend(find_unsupported_keywords(sub, sub_path))
+    return errors
+
+
+def _iter_sub_schemas(schema: dict):
+    """产出 (路径, 子 schema)：properties 各字段、items、additionalProperties。"""
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for key, sub in properties.items():
+            if isinstance(sub, dict):
+                yield ("properties", key), sub
+    items = schema.get("items")
+    if isinstance(items, dict):
+        yield ("items",), items
+    additional = schema.get("additionalProperties")
+    if isinstance(additional, dict):
+        yield ("additionalProperties",), additional
+
+
 # ---------- Schema 校验 ----------
 
 def validate(json_str: str, schema: dict) -> ValidationResult:
@@ -98,6 +168,11 @@ def validate(json_str: str, schema: dict) -> ValidationResult:
     Returns:
         ValidationResult: ok=True 时 parsed 为解析后的 dict/list
     """
+    # fail-fast：schema 含不支持的关键字/形式时直接拒绝，绝不静默漏校验
+    schema_errors = find_unsupported_keywords(schema)
+    if schema_errors:
+        return ValidationResult(ok=False, errors=schema_errors, raw_text=json_str)
+
     extracted = extract_json(json_str)
     if extracted is None:
         return ValidationResult(

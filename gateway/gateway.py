@@ -122,7 +122,7 @@ class Gateway:
                         "elapsed_ms": round(elapsed_ms, 1),
                     },
                 )
-                raise from_unexpected(e, request.model) from e
+                raise from_unexpected(e, provider) from e
         # 总耗时在适配器返回后立即打点：只统计上游往返，不含本地结构化校验
         resp.elapsed_ms = (time.monotonic() - started) * 1000.0
         metrics.inc("llm_calls_total")
@@ -193,7 +193,7 @@ class Gateway:
                 first = StreamEvent(type="error", error=e.to_dict())
             except Exception as e:
                 first = StreamEvent(
-                    type="error", error=from_unexpected(e, request.model).to_dict()
+                    type="error", error=from_unexpected(e, provider).to_dict()
                 )
             if (
                 first is not None
@@ -347,7 +347,7 @@ class Gateway:
                     "elapsed_ms": round(elapsed_ms, 1),
                 },
             )
-            yield self._error_event(from_unexpected(e, request.model), started, ttft_ms)
+            yield self._error_event(from_unexpected(e, provider), started, ttft_ms)
 
     @staticmethod
     def _error_event(err: GatewayError, started: float, ttft_ms: float | None) -> StreamEvent:
