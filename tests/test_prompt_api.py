@@ -53,6 +53,33 @@ def _create_translator(client: TestClient) -> dict:
     return resp.json()
 
 
+# ---------- 启动自举（示例模板播种） ----------
+
+class TestEnsureSamplePrompt:
+    def test_seeds_translator_v1_v2(self, tmp_path):
+        store = SqlitePromptStore(str(tmp_path / "prompts.db"))
+        server._ensure_sample_prompt(store)
+        meta = store.get_prompt("translator")
+        assert meta is not None
+        assert meta.latest_version == 2
+        v1, v2 = store.get_version("translator", 1), store.get_version("translator", 2)
+        assert v1.variables == ["text", "lang"]
+        assert "专业译者" in v2.content
+
+    def test_idempotent_when_exists(self, tmp_path):
+        store = SqlitePromptStore(str(tmp_path / "prompts.db"))
+        server._ensure_sample_prompt(store)
+        server._ensure_sample_prompt(store)   # 第二次应静默跳过，不追加版本
+        assert store.get_prompt("translator").latest_version == 2
+
+    def test_nonempty_store_untouched(self, tmp_path):
+        store = SqlitePromptStore(str(tmp_path / "prompts.db"))
+        store.create_prompt("mine", "自定义", "", "你好{{name}}", ["name"])
+        server._ensure_sample_prompt(store)   # 已有模板时只补示例，不动用户数据
+        assert store.get_prompt("mine") is not None
+        assert store.get_prompt("translator").latest_version == 2
+
+
 # ---------- Prompt 管理端点 ----------
 
 class TestPromptEndpoints:

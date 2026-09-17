@@ -238,6 +238,29 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
 load_env()
 store: PromptStore = SqlitePromptStore(os.environ.get("PROMPTS_DB_PATH", "prompts.db"))
 
+
+def _ensure_sample_prompt(ps: PromptStore) -> None:
+    """启动自举：空库时幂等创建示例模板 translator（v1 基础版 + v2 精修版），
+    让首次启动的 UI/API 有可用模板；已存在时静默跳过（与 main.py 的 demo 自举一致）。"""
+    try:
+        ps.create_prompt(
+            "translator", "翻译", "中译英 demo 模板",
+            "把{{text}}从中文翻译成{{lang}}，只输出译文。",
+            ["text", "lang"],
+        )
+        ps.add_version(
+            "translator",
+            "你是专业译者。把{{text}}从中文翻译成{{lang}}，只输出译文，"
+            "保留原文的标点与语气。",
+            ["text", "lang"],
+        )
+        logger.info("已播种示例模板: translator (v1, v2)")
+    except PromptAlreadyExistsError:
+        pass
+
+
+_ensure_sample_prompt(store)
+
 # 限流器：RATE_LIMIT_RPM 未设置或为 0 时为 None（禁用）
 limiter = ratelimit_from_env()
 
