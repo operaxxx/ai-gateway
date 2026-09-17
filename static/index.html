@@ -3,41 +3,68 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
   <title>AI Gateway 控制台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232E5CE6'/%3E%3Cpath d='M16 6.5l7.5 4.5v10L16 25.5 8.5 21V11z' fill='none' stroke='%23fff' stroke-width='2' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='16' r='2.4' fill='%23fff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <!-- 顶栏：模型选择 / 参数 / 流式开关 / 状态灯 -->
+  <!-- 顶栏：品牌区 / 模型与参数 / 输出开关 / 状态灯 -->
   <header id="topbar">
-    <h1>AI Gateway 控制台</h1>
-    <label class="field">模型
-      <select id="model-select"><option value="">加载中…</option></select>
-    </label>
-    <label class="field">temperature
-      <input id="temperature" type="number" min="0" max="2" step="0.1" placeholder="默认">
-    </label>
-    <label class="field">max_tokens
-      <input id="max-tokens" type="number" min="1" step="1" placeholder="默认">
-    </label>
-    <label class="switch">
-      <input id="stream-toggle" type="checkbox">
-      <span>流式输出</span>
-    </label>
-    <label class="switch">
-      <input id="thinking-toggle" type="checkbox" checked>
-      <span>深度思考</span>
-    </label>
-    <span id="stream-status-wrap" class="status-wrap">
-      <span id="stream-status" class="dot idle" title="空闲"></span>
-      <span id="stream-status-text">空闲</span>
-    </span>
-    <button id="btn-clear-logs" class="ghost">清空日志</button>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M16 6.5l7.5 4.5v10L16 25.5 8.5 21V11z" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><circle cx="16" cy="16" r="2.4" fill="#fff"/></svg>
+      </span>
+      <div class="brand-text">
+        <h1>AI Gateway 控制台</h1>
+        <span class="brand-sub">统一接入 · Prompt 资产 · 调试观测</span>
+      </div>
+    </div>
+
+    <div class="tb-controls">
+      <div class="tb-group">
+        <label class="field">模型
+          <select id="model-select"><option value="">加载中…</option></select>
+        </label>
+        <label class="field">temperature
+          <input id="temperature" type="number" min="0" max="2" step="0.1" placeholder="默认">
+        </label>
+        <label class="field">max_tokens
+          <input id="max-tokens" type="number" min="1" step="1" placeholder="默认">
+        </label>
+      </div>
+
+      <div class="tb-group">
+        <label class="switch">
+          <input id="stream-toggle" type="checkbox">
+          <span>流式输出</span>
+        </label>
+        <label class="switch">
+          <input id="thinking-toggle" type="checkbox" checked>
+          <span>深度思考</span>
+        </label>
+      </div>
+
+      <div class="tb-group">
+        <span id="stream-status-wrap" class="status-wrap">
+          <span id="stream-status" class="dot idle" title="空闲"></span>
+          <span id="stream-status-text">空闲</span>
+        </span>
+        <button id="btn-clear-logs" class="ghost sm">
+          <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1M4.6 4.5l.6 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          清空日志
+        </button>
+      </div>
+    </div>
   </header>
 
   <main>
     <!-- 左栏：模板设置 -->
     <section id="panel-templates">
-      <h2>模板设置</h2>
+      <div class="panel-head">
+        <h2>模板设置</h2>
+        <span class="panel-cap">Jinja2 · 版本化管理</span>
+      </div>
       <input id="tpl-search" type="search" placeholder="搜索模板（id / 名称）…">
       <ul id="tpl-list" class="tpl-list"></ul>
 
@@ -58,8 +85,14 @@
           placeholder="Jinja2 模板：&#123;&#123;var&#125;&#125; 占位，支持 &#123;% if %&#125;、&#123;% for %&#125;、&#123;&#123; v | default(&quot;兜底&quot;) &#125;&#125;"></textarea>
         <div id="tpl-actions">
           <button id="btn-tpl-save">保存</button>
-          <button id="btn-tpl-new" class="ghost">新建模板</button>
-          <button id="btn-tpl-delete" class="danger" hidden>删除模板</button>
+          <button id="btn-tpl-new" class="ghost">
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+            新建模板
+          </button>
+          <button id="btn-tpl-delete" class="danger" hidden>
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1M4.6 4.5l.6 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            删除模板
+          </button>
         </div>
         <p id="tpl-msg" class="msg" hidden></p>
       </div>
@@ -68,21 +101,27 @@
     <!-- 右栏：调用区 + 历史区 -->
     <div id="right-col">
       <section id="panel-playground">
-        <h2>调用</h2>
+        <div class="panel-head">
+          <h2>调用</h2>
+          <span class="panel-cap">Playground</span>
+        </div>
 
-        <div id="prompt-ref">
+        <div id="prompt-ref" class="inset-panel">
           <label class="switch">
             <input id="use-prompt" type="checkbox">
             <span>引用模板作为 system 消息</span>
           </label>
           <div id="variable-form" class="field-col" hidden></div>
-          <button id="btn-render-preview" class="ghost" hidden>渲染预览</button>
+          <button id="btn-render-preview" class="ghost sm" hidden>
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>
+            渲染预览
+          </button>
           <pre id="render-preview" class="pre-box" hidden></pre>
         </div>
 
         <textarea id="user-message" rows="4" placeholder="输入 user 消息…"></textarea>
 
-        <div id="schema-ref">
+        <div id="schema-ref" class="inset-panel">
           <label class="switch">
             <input id="schema-toggle" type="checkbox">
             <span>结构化输出（JSON Schema，流式结束后校验）</span>
@@ -92,8 +131,14 @@
         </div>
 
         <div id="chat-actions">
-          <button id="btn-send">发送</button>
-          <button id="btn-abort" class="danger" hidden>停止</button>
+          <button id="btn-send">
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M14.5 1.5L7.2 8.8M14.5 1.5l-4.7 13-2.4-6.2-6.2-2.4z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            发送
+          </button>
+          <button id="btn-abort" class="danger" hidden>
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.75" y="3.75" width="8.5" height="8.5" rx="1.5" fill="currentColor"/></svg>
+            停止
+          </button>
         </div>
 
         <div id="result">
@@ -108,10 +153,16 @@
       </section>
 
       <section id="panel-history">
-        <h2>历史结果
-          <button id="btn-compare" disabled>对比所选（0/2）</button>
-          <button id="btn-clear-history" class="ghost">清空历史</button>
-        </h2>
+        <div class="panel-head">
+          <h2>历史结果</h2>
+          <div class="panel-actions">
+            <button id="btn-compare" class="sm" disabled>对比所选（0/2）</button>
+            <button id="btn-clear-history" class="ghost sm">
+              <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1M4.6 4.5l.6 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              清空历史
+            </button>
+          </div>
+        </div>
         <ul id="history-list" class="history-list"></ul>
       </section>
     </div>
@@ -128,6 +179,10 @@
 
   <!-- 对比弹窗 -->
   <dialog id="compare-dialog">
+    <header class="dialog-head">
+      <h2>结果对比</h2>
+      <span class="panel-cap">elapsed 较快一方以绿色标出</span>
+    </header>
     <div id="compare-body" class="compare-grid"></div>
     <div class="dialog-footer">
       <button id="btn-close-compare" class="ghost">关闭</button>
