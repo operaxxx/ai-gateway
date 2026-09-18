@@ -1,0 +1,218 @@
+{
+  "module": "prompt_template",
+  "description": "模板引用：加载/参数替换/条件渲染/循环/版本/chat 引用",
+  "started_at": "2026-09-18T22:34:50",
+  "finished_at": "2026-09-18T22:34:51",
+  "duration_s": 1.0,
+  "steps": [
+    {
+      "n": 1,
+      "action": "启动 mock 上游 + 网关"
+    },
+    {
+      "n": 2,
+      "action": "创建模板（变量 + 条件 + 循环），校验变量自动提取"
+    },
+    {
+      "n": 3,
+      "action": "渲染预览：参数替换 + 条件分支(true) + 循环"
+    },
+    {
+      "n": 4,
+      "action": "渲染预览：条件分支(false)"
+    },
+    {
+      "n": 5,
+      "action": "错误路径：缺变量 -> 400 + missing 明细"
+    },
+    {
+      "n": 6,
+      "action": "错误路径：模板语法错误 -> 400"
+    },
+    {
+      "n": 7,
+      "action": "版本机制：追加 v2，v1 不可变，按版本渲染"
+    },
+    {
+      "n": 8,
+      "action": "chat 内联引用：prompt+variables 渲染为 system（mock 回显核对）"
+    },
+    {
+      "n": 9,
+      "action": "chat 引用版本钉死：version=1 时上游收到 v1（非 latest）"
+    },
+    {
+      "n": 10,
+      "action": "互斥校验：prompt 引用与自带 system 消息不可同用 -> 400"
+    },
+    {
+      "n": 11,
+      "action": "引用不存在的模板 -> 404"
+    }
+  ],
+  "checks": [
+    {
+      "name": "创建成功 201",
+      "expected": "201",
+      "actual": "201",
+      "passed": true
+    },
+    {
+      "name": "变量提取完整且按出现顺序 [role, formal, rules]",
+      "expected": "[\"role\", \"formal\", \"rules\"]",
+      "actual": "[\"role\", \"formal\", \"rules\"]",
+      "passed": true
+    },
+    {
+      "name": "初始版本号为 1",
+      "expected": "1",
+      "actual": "1",
+      "passed": true
+    },
+    {
+      "name": "渲染 200",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
+    },
+    {
+      "name": "参数替换生效（含『翻译』）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "条件分支 formal=true 生效（含『请使用敬语』）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "条件另一分支未渲染（不含『轻松一点』）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "循环逐项渲染（含 - 简洁 / - 准确）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "formal=false 走 else 分支（含『轻松一点』）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "空列表循环零项（不含『- 』）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "HTTP 400",
+      "expected": "400",
+      "actual": "400",
+      "passed": true
+    },
+    {
+      "name": "error=missing_variables",
+      "expected": "missing_variables",
+      "actual": "missing_variables",
+      "passed": true
+    },
+    {
+      "name": "missing 指明第一个缺失变量（formal 先于 rules 被渲染）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "missing=['formal']"
+    },
+    {
+      "name": "HTTP 400",
+      "expected": "400",
+      "actual": "400",
+      "passed": true
+    },
+    {
+      "name": "报错为模板语法错误",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "追加版本 201 且版本号为 2",
+      "expected": "[201, 2]",
+      "actual": "[201, 2]",
+      "passed": true
+    },
+    {
+      "name": "v1 内容不可变（仍为第一版）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "按 version=1 渲染得到 v1 内容",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "latest 渲染得到 v2 内容",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "不存在版本 -> 404",
+      "expected": "404",
+      "actual": "404",
+      "passed": true
+    },
+    {
+      "name": "HTTP 200",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
+    },
+    {
+      "name": "上游收到的 system == v1 渲染结果（mock 回显含敬语分支与循环项）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "text=mock-reply[system=你是翻译助手。\n请使用敬语。写作要点：\n- 简洁\n- 准确\n]…"
+    },
+    {
+      "name": "再次调用上游回显仍为 v1 内容",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "HTTP 400",
+      "expected": "400",
+      "actual": "400",
+      "passed": true
+    },
+    {
+      "name": "HTTP 404",
+      "expected": "404",
+      "actual": "404",
+      "passed": true
+    }
+  ],
+  "evidence": {
+    "rendered_formal": "你是翻译助手。\n请使用敬语。写作要点：\n- 简洁\n- 准确\n",
+    "rendered_casual": "你是翻译助手。\n轻松一点。写作要点：\n",
+    "chat_text_with_prompt": "mock-reply[system=你是翻译助手。\n请使用敬语。写作要点：\n- 简洁\n- 准确\n]"
+  },
+  "summary": {
+    "total": 25,
+    "passed": 25,
+    "failed": 0,
+    "status": "PASS"
+  }
+}

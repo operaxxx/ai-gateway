@@ -1,0 +1,248 @@
+{
+  "module": "rate_limit",
+  "description": "限流：阈值触发 / 429 策略 / 并发压力 / 窗口恢复",
+  "started_at": "2026-09-18T22:34:57",
+  "finished_at": "2026-09-18T22:35:08",
+  "duration_s": 11.2,
+  "steps": [
+    {
+      "n": 1,
+      "action": "启动 mock 上游 + 网关（RATE_LIMIT_RPM=6, WINDOW_S=4s, 重试关闭）"
+    },
+    {
+      "n": 2,
+      "action": "连续发送 12 个请求（阈值 6）-> 前 6 个放行，其余拒绝"
+    },
+    {
+      "n": 3,
+      "action": "校验 429 响应：统一错误体 + Retry-After 头"
+    },
+    {
+      "n": 4,
+      "action": "限流期间抓取 /v1/metrics（监控端点不受限流）"
+    },
+    {
+      "n": 5,
+      "action": "等待窗口滑动 4s 后进行 12 线程并发压力测试"
+    },
+    {
+      "n": 6,
+      "action": "等待窗口滑动 4.5s -> 验证限流自动恢复"
+    }
+  ],
+  "checks": [
+    {
+      "name": "前 6 个请求全部 200（阈值内放行）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "状态序列=[200, 200, 200, 200, 200, 200, 429, 429, 429, 429, 429, 429]"
+    },
+    {
+      "name": "第 7 个起全部 429（精确触发）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "首个 429 位于第 7 个"
+    },
+    {
+      "name": "被拒请求不占窗口名额（放行数恰好 = 阈值）",
+      "expected": "6",
+      "actual": "6",
+      "passed": true
+    },
+    {
+      "name": "error.type = rate_limit_error",
+      "expected": "rate_limit_error",
+      "actual": "rate_limit_error",
+      "passed": true
+    },
+    {
+      "name": "error.retryable = true（建议调用方稍后重试）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "Retry-After 头存在且为 [1, 窗口] 内整数",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "Retry-After=4"
+    },
+    {
+      "name": "metrics 抓取成功且 rate_limited_total == 6",
+      "expected": "6",
+      "actual": "6",
+      "passed": true
+    },
+    {
+      "name": "status_counts 含 429:6",
+      "expected": "6",
+      "actual": "6",
+      "passed": true
+    },
+    {
+      "name": "429 计入 errors_total（错误率口径完整）",
+      "expected": "6",
+      "actual": "6",
+      "passed": true
+    },
+    {
+      "name": "并发放行数 <= 阈值（6）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "放行 6 / 拒绝 6 / 总 12"
+    },
+    {
+      "name": "并发放行 + 拒绝 == 总请求数（无丢失）",
+      "expected": "12",
+      "actual": "12",
+      "passed": true
+    },
+    {
+      "name": "并发下被拒请求全部拿到 429（策略执行无例外）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "窗口滑动后请求恢复 200（无需人工干预）",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
+    },
+    {
+      "name": "恢复耗时符合预期（≈ 等待窗口时长）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "recovery_s=4.5"
+    }
+  ],
+  "evidence": {
+    "sequential_results": [
+      {
+        "status": 200,
+        "ms": 50.9
+      },
+      {
+        "status": 200,
+        "ms": 14.4
+      },
+      {
+        "status": 200,
+        "ms": 14.0
+      },
+      {
+        "status": 200,
+        "ms": 14.1
+      },
+      {
+        "status": 200,
+        "ms": 14.1
+      },
+      {
+        "status": 200,
+        "ms": 14.2
+      },
+      {
+        "status": 429,
+        "ms": 12.3
+      },
+      {
+        "status": 429,
+        "ms": 12.8
+      },
+      {
+        "status": 429,
+        "ms": 16.2
+      },
+      {
+        "status": 429,
+        "ms": 17.4
+      },
+      {
+        "status": 429,
+        "ms": 40.0
+      },
+      {
+        "status": 429,
+        "ms": 27.8
+      }
+    ],
+    "rejected_response_sample": {
+      "status": 429,
+      "body": {
+        "error": {
+          "category": "rate_limited",
+          "type": "rate_limit_error",
+          "message": "请求过于频繁（限流 6 次/4s 窗口），请稍后重试",
+          "retryable": true
+        }
+      },
+      "retry_after": "4"
+    },
+    "concurrent_results": [
+      {
+        "status": 200,
+        "ms": 706.1
+      },
+      {
+        "status": 200,
+        "ms": 651.0
+      },
+      {
+        "status": 200,
+        "ms": 663.3
+      },
+      {
+        "status": 429,
+        "ms": 717.2
+      },
+      {
+        "status": 429,
+        "ms": 714.9
+      },
+      {
+        "status": 429,
+        "ms": 715.2
+      },
+      {
+        "status": 429,
+        "ms": 713.0
+      },
+      {
+        "status": 429,
+        "ms": 714.7
+      },
+      {
+        "status": 429,
+        "ms": 714.8
+      },
+      {
+        "status": 200,
+        "ms": 708.0
+      },
+      {
+        "status": 200,
+        "ms": 710.2
+      },
+      {
+        "status": 200,
+        "ms": 705.9
+      }
+    ],
+    "recovery": {
+      "status": 200,
+      "recovery_s": 4.5
+    }
+  },
+  "summary": {
+    "total": 14,
+    "passed": 14,
+    "failed": 0,
+    "status": "PASS"
+  }
+}

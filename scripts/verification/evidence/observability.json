@@ -1,0 +1,248 @@
+{
+  "module": "observability",
+  "description": "可观测数据：指标收集 / 日志印证 / 资源采样 / HTML 报告",
+  "started_at": "2026-09-18T22:34:51",
+  "finished_at": "2026-09-18T22:34:52",
+  "duration_s": 1.5,
+  "steps": [
+    {
+      "n": 1,
+      "action": "启动 mock 上游 + 网关（LOG_FILE 落盘 JSON 日志）"
+    },
+    {
+      "n": 2,
+      "action": "基线指标抓取",
+      "detail": "baseline requests_total=0"
+    },
+    {
+      "n": 3,
+      "action": "负载：3 次非流式 + 3 次流式（成功路径）"
+    },
+    {
+      "n": 4,
+      "action": "负载：2 次非法模型（注入 400 错误）"
+    },
+    {
+      "n": 5,
+      "action": "负载后指标抓取与一致性校验"
+    },
+    {
+      "n": 6,
+      "action": "解析 JSON 结构化日志（与指标互相印证）"
+    },
+    {
+      "n": 7,
+      "action": "生成 HTML 可视化报告（内联 SVG）"
+    }
+  ],
+  "checks": [
+    {
+      "name": "requests_total 增量 == 8（6 成功 + 2 失败）",
+      "expected": "8",
+      "actual": "8",
+      "passed": true
+    },
+    {
+      "name": "llm_calls_total == 6（全部成功）",
+      "expected": "6",
+      "actual": "6",
+      "passed": true
+    },
+    {
+      "name": "llm_errors_total == 0（400 在路由层被拦，未到上游）",
+      "expected": "0",
+      "actual": "0",
+      "passed": true
+    },
+    {
+      "name": "errors_total == 2",
+      "expected": "2",
+      "actual": "2",
+      "passed": true
+    },
+    {
+      "name": "error_rate == 0.25",
+      "expected": "0.25",
+      "actual": "0.25",
+      "passed": true
+    },
+    {
+      "name": "status_counts 200:6 / 400:2",
+      "expected": "{\"200\": 6, \"400\": 2}",
+      "actual": "{\"200\": 6, \"400\": 2}",
+      "passed": true
+    },
+    {
+      "name": "llm_latency 样本 6 个",
+      "expected": "6",
+      "actual": "6",
+      "passed": true
+    },
+    {
+      "name": "llm_latency p50 > 0",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "p50=1.8ms p95=122.9ms"
+    },
+    {
+      "name": "llm_ttft 样本 3 个（仅流式请求有首 token）",
+      "expected": "3",
+      "actual": "3",
+      "passed": true
+    },
+    {
+      "name": "日志 3 条 complete 成功",
+      "expected": "3",
+      "actual": "3",
+      "passed": true
+    },
+    {
+      "name": "日志 3 条 stream 成功结束",
+      "expected": "3",
+      "actual": "3",
+      "passed": true
+    },
+    {
+      "name": "日志 2 条 status=400 请求完成",
+      "expected": "2",
+      "actual": "2",
+      "passed": true
+    },
+    {
+      "name": "成功日志带 elapsed_ms 计时字段",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "成功日志带 request_id（全链路追踪）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "日志 JSON 含 service/env 标识",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "HTML 报告已生成",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "/Users/hank/free/project/ai-gateway/scripts/verification/reports/observability_report.html"
+    },
+    {
+      "name": "报告包含 SVG 图表",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "报告包含指标计数表",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    }
+  ],
+  "evidence": {
+    "client_records": [
+      {
+        "kind": "non-stream",
+        "ok": true,
+        "client_ms": 35.3
+      },
+      {
+        "kind": "non-stream",
+        "ok": true,
+        "client_ms": 12.9
+      },
+      {
+        "kind": "non-stream",
+        "ok": true,
+        "client_ms": 12.8
+      },
+      {
+        "kind": "stream",
+        "ok": true,
+        "client_ms": 127.0
+      },
+      {
+        "kind": "stream",
+        "ok": true,
+        "client_ms": 136.9
+      },
+      {
+        "kind": "stream",
+        "ok": true,
+        "client_ms": 147.2
+      }
+    ],
+    "resource_samples": [
+      {
+        "cpu_percent": 16.8,
+        "rss_mb": 61.4
+      },
+      {
+        "cpu_percent": 11.4,
+        "rss_mb": 61.4
+      },
+      {
+        "cpu_percent": 11.4,
+        "rss_mb": 61.4
+      }
+    ],
+    "metrics_after": {
+      "uptime_s": 0.8,
+      "counters": {
+        "requests_total": 8,
+        "errors_total": 2,
+        "rate_limited_total": 0,
+        "retries_total": 0,
+        "llm_calls_total": 6,
+        "llm_errors_total": 0
+      },
+      "status_counts": {
+        "200": 6,
+        "400": 2
+      },
+      "error_rate": 0.25,
+      "llm_success_rate": 1.0,
+      "http_latency": {
+        "count": 8,
+        "avg_ms": 3.7,
+        "p50_ms": 1.0,
+        "p95_ms": 23.3,
+        "p99_ms": 23.3,
+        "max_ms": 23.3,
+        "min_ms": 0.6
+      },
+      "llm_latency": {
+        "count": 6,
+        "avg_ms": 59.8,
+        "p50_ms": 1.8,
+        "p95_ms": 122.9,
+        "p99_ms": 122.9,
+        "max_ms": 122.9,
+        "min_ms": 0.6
+      },
+      "llm_ttft": {
+        "count": 3,
+        "avg_ms": 1.4,
+        "p50_ms": 1.2,
+        "p95_ms": 1.9,
+        "p99_ms": 1.9,
+        "max_ms": 1.9,
+        "min_ms": 1.0
+      }
+    }
+  },
+  "summary": {
+    "total": 18,
+    "passed": 18,
+    "failed": 0,
+    "status": "PASS"
+  }
+}

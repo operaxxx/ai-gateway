@@ -1,0 +1,225 @@
+{
+  "module": "structured_output",
+  "description": "结构化输出：JSON Schema 字段/类型/格式校验",
+  "started_at": "2026-09-18T22:34:48",
+  "finished_at": "2026-09-18T22:34:50",
+  "duration_s": 1.7,
+  "steps": [
+    {
+      "n": 1,
+      "action": "启动 mock 上游 + 网关"
+    },
+    {
+      "n": 2,
+      "action": "正例A 非流式：flash + 嵌套 schema（上游 tool_use 模式）"
+    },
+    {
+      "n": 3,
+      "action": "正例A 校验：字段完整性 / 类型准确性 / 格式正确性"
+    },
+    {
+      "n": 4,
+      "action": "正例B 流式：stream + response_format 同开（delta 为 JSON 增量）"
+    },
+    {
+      "n": 5,
+      "action": "正例C 非流式：pro 走 Responses json_schema 协议"
+    },
+    {
+      "n": 6,
+      "action": "反例A 非流式：上游返回类型错误（age: string）-> 期望 422"
+    },
+    {
+      "n": 7,
+      "action": "反例B 流式：上游返回缺字段对象 -> done.validation.ok=false"
+    }
+  ],
+  "checks": [
+    {
+      "name": "HTTP 200",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
+    },
+    {
+      "name": "响应含 structured_output 对象",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "required 字段全部存在（name/age/tags）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "name 类型为 string",
+      "expected": "str",
+      "actual": "str",
+      "passed": true
+    },
+    {
+      "name": "age 类型为 integer（非 bool/float）",
+      "expected": "int",
+      "actual": "int",
+      "passed": true
+    },
+    {
+      "name": "tags 为 string 数组",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "无额外字段（additionalProperties=false）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "独立 schema 校验器复核通过",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "errors=None"
+    },
+    {
+      "name": "响应含 elapsed_ms（可观测耗时）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "delta 数量 > 1（JSON 增量实时透传）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "6 个增量"
+    },
+    {
+      "name": "done.validation.ok = true",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "validation.parsed 为完整对象（含全部 required 字段）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "流式拼接 JSON 与 parsed 一致",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "HTTP 200",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
+    },
+    {
+      "name": "structured_output 符合 schema（responses 协议）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "HTTP 422",
+      "expected": "422",
+      "actual": "422",
+      "passed": true
+    },
+    {
+      "name": "错误码为 structured_output_validation_failed",
+      "expected": "structured_output_validation_failed",
+      "actual": "structured_output_validation_failed",
+      "passed": true
+    },
+    {
+      "name": "errors 明细含 field/type/message",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "errors=[{'field': 'name', 'type': 'type_error', 'message': '期望 string，得到 integer'}]"
+    },
+    {
+      "name": "done.validation.ok = false",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "validation.errors 非空（含缺失字段路径）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "errors=[{'field': 'name', 'type': 'missing_field', 'message': '缺少必填字段：name'}]"
+    }
+  ],
+  "evidence": {
+    "valid_response": {
+      "structured_output": {
+        "name": "xx",
+        "age": 1,
+        "tags": [
+          "x"
+        ],
+        "score": 1.0
+      },
+      "model": "deepseek-v4-flash",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 5
+      },
+      "stop_reason": "stop",
+      "elapsed_ms": 2.2
+    },
+    "stream_validation": {
+      "ok": true,
+      "parsed": {
+        "name": "xx",
+        "age": 1,
+        "tags": [
+          "x"
+        ],
+        "score": 1.0
+      }
+    },
+    "invalid_response_422": {
+      "status": 422,
+      "body": {
+        "detail": {
+          "error": "structured_output_validation_failed",
+          "message": "结构化输出校验失败: [name] 期望 string，得到 integer",
+          "errors": [
+            {
+              "field": "name",
+              "type": "type_error",
+              "message": "期望 string，得到 integer"
+            }
+          ]
+        }
+      }
+    },
+    "stream_invalid_validation": {
+      "ok": false,
+      "errors": [
+        {
+          "field": "name",
+          "type": "missing_field",
+          "message": "缺少必填字段：name"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "total": 20,
+    "passed": 20,
+    "failed": 0,
+    "status": "PASS"
+  }
+}

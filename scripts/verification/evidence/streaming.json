@@ -1,0 +1,280 @@
+{
+  "module": "streaming",
+  "description": "流式输出：SSE 持续返回 + 时序证据",
+  "started_at": "2026-09-18T22:34:46",
+  "finished_at": "2026-09-18T22:34:48",
+  "duration_s": 1.7,
+  "steps": [
+    {
+      "n": 1,
+      "action": "启动 mock 上游 + 网关（mock 配置 8 个 delta，间隔 80ms）"
+    },
+    {
+      "n": 2,
+      "action": "发送 stream=true 请求并逐事件记录接收时间戳",
+      "detail": "http://127.0.0.1:50115/v1/chat"
+    },
+    {
+      "n": 3,
+      "action": "校验 SSE 响应头"
+    },
+    {
+      "n": 4,
+      "action": "校验事件序列与块数"
+    },
+    {
+      "n": 5,
+      "action": "校验流式特征：delta 逐块间隔到达"
+    },
+    {
+      "n": 6,
+      "action": "校验计时字段（网关打点 vs 实测）"
+    },
+    {
+      "n": 7,
+      "action": "校验内容完整性"
+    },
+    {
+      "n": 8,
+      "action": "对照组：stream=false 单次 JSON 返回"
+    }
+  ],
+  "checks": [
+    {
+      "name": "Content-Type 为 text/event-stream",
+      "expected": "text/event-stream",
+      "actual": "text/event-stream",
+      "passed": true
+    },
+    {
+      "name": "Cache-Control: no-cache（流禁用缓存）",
+      "expected": "no-cache",
+      "actual": "no-cache",
+      "passed": true
+    },
+    {
+      "name": "X-Accel-Buffering: no（反代不缓冲）",
+      "expected": "no",
+      "actual": "no",
+      "passed": true
+    },
+    {
+      "name": "首事件为 start",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "末事件为 done",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "事件仅含 start/delta/done（无 error）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "正文 delta 块数 >= 上游块数(8)",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "实际收到 8 个 delta"
+    },
+    {
+      "name": "相邻 delta 最小间隔 >= 48ms",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "间隔记录(ms): [84.1, 85.4, 83.7, 84.0, 85.5, 81.1, 83.9]"
+    },
+    {
+      "name": "总流时长 >= 上游发送时长(块数-1)*间隔 的 80%",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "流总时长 612.2ms"
+    },
+    {
+      "name": "done 含 stop_reason",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "done 含 usage(input/output_tokens)",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "done 含 ttft_ms > 0",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "ttft_ms=2.4"
+    },
+    {
+      "name": "done 含 elapsed_ms > 0",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "elapsed_ms=591.0"
+    },
+    {
+      "name": "ttft_ms 与实测首 delta 到达时间吻合(±500ms)",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "ttft_ms=2.4, 实测=22.9ms"
+    },
+    {
+      "name": "拼接正文 == 上游发送内容",
+      "expected": "mock-reply[system=]",
+      "actual": "mock-reply[system=]",
+      "passed": true
+    },
+    {
+      "name": "非流式返回 JSON（非 event-stream）",
+      "expected": "application/json",
+      "actual": "application/json",
+      "passed": true
+    },
+    {
+      "name": "非流式响应含 text 与 elapsed_ms",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    }
+  ],
+  "evidence": {
+    "stream_run": {
+      "started_at": "22:34:47",
+      "ended_at": "22:34:47",
+      "http_status": 200,
+      "first_byte_ms": 22.7,
+      "events": [
+        {
+          "event": "start",
+          "data": {
+            "type": "start"
+          },
+          "t_ms": 22.7,
+          "gap_ms": 0.0
+        },
+        {
+          "event": "delta",
+          "data": {
+            "type": "delta",
+            "text": "moc",
+            "channel": "text"
+          },
+          "t_ms": 22.9,
+          "gap_ms": 0.2
+        },
+        {
+          "event": "delta",
+          "data": {
+            "type": "delta",
+            "text": "k-r",
+            "channel": "text"
+          },
+          "t_ms": 107.1,
+          "gap_ms": 84.1
+        },
+        {
+          "event": "delta",
+          "data": {
+            "type": "delta",
+            "text": "epl",
+            "channel": "text"
+          },
+          "t_ms": 192.5,
+          "gap_ms": 85.4
+        },
+        {
+          "event": "delta",
+          "data": {
+            "type": "delta",
+            "text": "y[",
+            "channel": "text"
+          },
+          "t_ms": 276.2,
+          "gap_ms": 83.7
+        },
+        {
+          "event": "delta",
+          "data": {
+            "type": "delta",
+            "text": "sy",
+            "channel": "text"
+          },
+          "t_ms": 360.3,
+          "gap_ms": 84.0
+        },
+        {
+          "event": "delta",
+          "data": {
+            "type": "delta",
+            "text": "st",
+            "channel": "text"
+          },
+          "t_ms": 445.8,
+          "gap_ms": 85.5
+        },
+        {
+          "event": "delta",
+          "data": {
+            "type": "delta",
+            "text": "em",
+            "channel": "text"
+          },
+          "t_ms": 526.9,
+          "gap_ms": 81.1
+        },
+        {
+          "event": "delta",
+          "data": {
+            "type": "delta",
+            "text": "=]",
+            "channel": "text"
+          },
+          "t_ms": 610.8,
+          "gap_ms": 83.9
+        },
+        {
+          "event": "done",
+          "data": {
+            "type": "done",
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 5
+            },
+            "stop_reason": "stop",
+            "ttft_ms": 2.4,
+            "elapsed_ms": 591.0
+          },
+          "t_ms": 612.2,
+          "gap_ms": 1.4
+        }
+      ]
+    },
+    "delta_gaps_ms": [
+      84.1,
+      85.4,
+      83.7,
+      84.0,
+      85.5,
+      81.1,
+      83.9
+    ]
+  },
+  "summary": {
+    "total": 17,
+    "passed": 17,
+    "failed": 0,
+    "status": "PASS"
+  }
+}

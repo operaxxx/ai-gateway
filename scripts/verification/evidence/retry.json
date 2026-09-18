@@ -1,0 +1,275 @@
+{
+  "module": "retry",
+  "description": "重试机制：故障注入 / 重试次数 / 退避策略 / 恢复时间",
+  "started_at": "2026-09-18T22:34:52",
+  "finished_at": "2026-09-18T22:34:57",
+  "duration_s": 4.3,
+  "steps": [
+    {
+      "n": 1,
+      "action": "启动 mock 上游 + 网关（RETRY_MAX_ATTEMPTS=3, BACKOFF_BASE=0.2s）"
+    },
+    {
+      "n": 2,
+      "action": "场景A：注入 2 次 500 -> 第 3 次成功（指数退避重试）"
+    },
+    {
+      "n": 3,
+      "action": "场景B：注入 1 次 429（Retry-After: 1s）-> 尊重指示后成功"
+    },
+    {
+      "n": 4,
+      "action": "场景C：注入持续 400（不可重试）-> 快速失败不重试"
+    },
+    {
+      "n": 5,
+      "action": "场景D：持续 503 -> 3 次尝试耗尽后返回 502"
+    },
+    {
+      "n": 6,
+      "action": "场景E：流式请求遇 1 次 500 -> 首事件前重试，下游看到完整成功流"
+    },
+    {
+      "n": 7,
+      "action": "场景F：流式发出 2 个 delta 后断连 -> 不重试，error 事件透传"
+    },
+    {
+      "n": 8,
+      "action": "汇总：可恢复场景成功率与恢复时间"
+    }
+  ],
+  "checks": [
+    {
+      "name": "最终 HTTP 200（自动恢复）",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
+    },
+    {
+      "name": "上游收到 3 次请求（1 首试 + 2 重试）",
+      "expected": "3",
+      "actual": "3",
+      "passed": true
+    },
+    {
+      "name": "上游状态记录 2×500 + 1×200",
+      "expected": "{\"500\": 2, \"200\": 1}",
+      "actual": "{\"500\": 2, \"200\": 1}",
+      "passed": true
+    },
+    {
+      "name": "网关 retries_total 计数 +2",
+      "expected": "2",
+      "actual": "2",
+      "passed": true
+    },
+    {
+      "name": "恢复时间 >= 2 次退避之和(0.2+0.4=0.6s)",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "recovery_ms=649.9"
+    },
+    {
+      "name": "最终 HTTP 200",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
+    },
+    {
+      "name": "上游收到 2 次请求",
+      "expected": "2",
+      "actual": "2",
+      "passed": true
+    },
+    {
+      "name": "退避尊重 Retry-After（耗时 >= 1s）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "recovery_ms=1020.8（含上游往返）"
+    },
+    {
+      "name": "HTTP 400（透传客户端错误）",
+      "expected": "400",
+      "actual": "400",
+      "passed": true
+    },
+    {
+      "name": "上游仅收到 1 次请求（零重试）",
+      "expected": "1",
+      "actual": "1",
+      "passed": true
+    },
+    {
+      "name": "网关 retries_total 无增量",
+      "expected": "0",
+      "actual": "0",
+      "passed": true
+    },
+    {
+      "name": "快速失败（< 1s，无退避等待）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "fail_ms=12.3"
+    },
+    {
+      "name": "HTTP 502（server 类错误统一映射）",
+      "expected": "502",
+      "actual": "502",
+      "passed": true
+    },
+    {
+      "name": "上游收到 3 次请求后放弃",
+      "expected": "3",
+      "actual": "3",
+      "passed": true
+    },
+    {
+      "name": "网关 retries_total 增量 = max_attempts-1",
+      "expected": "2",
+      "actual": "2",
+      "passed": true
+    },
+    {
+      "name": "错误体 error.category=server / retryable=true",
+      "expected": "[\"server\", true]",
+      "actual": "[\"server\", true]",
+      "passed": true
+    },
+    {
+      "name": "事件序列为 start→delta…→done（无 error）",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "上游收到 2 次请求（重试生效）",
+      "expected": "2",
+      "actual": "2",
+      "passed": true
+    },
+    {
+      "name": "上游仅 1 次请求（已发内容不可回退，不重试）",
+      "expected": "1",
+      "actual": "1",
+      "passed": true
+    },
+    {
+      "name": "下游收到 start + delta 后收到 error 事件",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "error 事件含网络类错误（category=network）",
+      "expected": "network",
+      "actual": "network",
+      "passed": true
+    },
+    {
+      "name": "带计时记录的可恢复场景全部恢复（A=500×2, B=429）",
+      "expected": "2",
+      "actual": "2",
+      "passed": true,
+      "detail": "记录=[{'case': 'A 500×2', 'recovered': True, 'ms': 649.9}, {'case': 'B 429+Retry-After', 'recovered': True, 'ms': 1020.8}]"
+    },
+    {
+      "name": "平均恢复时间 < 3s",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    }
+  ],
+  "evidence": {
+    "case_a": {
+      "status": 200,
+      "upstream_attempts": 3,
+      "by_status": {
+        "500": 2,
+        "200": 1
+      },
+      "recovery_ms": 649.9
+    },
+    "case_b": {
+      "status": 200,
+      "upstream_attempts": 2,
+      "recovery_ms": 1020.8
+    },
+    "case_c": {
+      "status": 400,
+      "upstream_attempts": 1,
+      "fail_ms": 12.3
+    },
+    "case_d": {
+      "status": 502,
+      "upstream_attempts": 3,
+      "error": {
+        "category": "server",
+        "type": "service_unavailable",
+        "message": "mock 上游注入故障 (HTTP 503)",
+        "retryable": true,
+        "provider": "anthropic",
+        "status_code": 503
+      }
+    },
+    "case_e": {
+      "event_types": [
+        "start",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "done"
+      ],
+      "upstream_attempts": 2
+    },
+    "case_f": {
+      "event_types": [
+        "start",
+        "delta",
+        "delta",
+        "error"
+      ],
+      "upstream_attempts": 1,
+      "error_event": {
+        "event": "error",
+        "data": {
+          "type": "error",
+          "error": {
+            "category": "network",
+            "type": "network_connection",
+            "message": "网络异常: peer closed connection without sending complete message body (incomplete chunked read)",
+            "retryable": true,
+            "provider": "anthropic"
+          },
+          "ttft_ms": 1.2,
+          "elapsed_ms": 81.8
+        },
+        "t_ms": 82.2,
+        "gap_ms": 45.5
+      }
+    },
+    "recovery_records": [
+      {
+        "case": "A 500×2",
+        "recovered": true,
+        "ms": 649.9
+      },
+      {
+        "case": "B 429+Retry-After",
+        "recovered": true,
+        "ms": 1020.8
+      }
+    ]
+  },
+  "summary": {
+    "total": 23,
+    "passed": 23,
+    "failed": 0,
+    "status": "PASS"
+  }
+}
