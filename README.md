@@ -181,4 +181,4 @@ uv run python scripts/verification/verify_retry.py       # 单脚本独立运行
 # venv + pip 环境下将 uv run python 换成 python 即可
 ```
 
-验证脚本覆盖：流式输出、结构化输出、模板引用、可观测数据、重试机制、限流六大模块，每个脚本独立拉起 mock 上游 + 网关，自动判定 PASS/FAIL 并产出证据报告；任一模块非 PASS 时退出码为 1，可直接接入 CI。最新一轮全量通过的证明已存档于 [scripts/verification/evidence/](scripts/verification/evidence/)。
+验证脚本覆盖：流式输出、结构化输出、模板引用、可观测数据、重试机制、限流六大模块，每个脚本独立拉起 mock 上游 + 网关，自动判定 PASS/FAIL 并产出证据报告；任一模块非 PASS 时退出码为 1，可直接接入 CI。最新一轮全量通过的证明已存档于 [scripts/verification/evidence/](scripts/verification/evidence/)，其中 [curl_examples.md](scripts/verification/evidence/curl_examples.md) 提供六大功能的 curl 复现示例（对真实服务的补充证据）。
