@@ -42,6 +42,22 @@ curl -s $BASE/v1/chat -H "Content-Type: application/json" -d '{
 }'
 # 预期：响应含 "structured_output": {...} 且通过 schema 校验，附 elapsed_ms
 
+> **实测注意**：flash 走 Anthropic 协议的 tool_use 模式，因 DeepSeek thinking 模式不支持强制
+> `tool_choice`，真实模型**偶发**不调用工具而直接文本回答 → 422（或流式 `done.validation.ok=false`），
+> 重试即可。需要协议级强制时用 pro 模型（Responses json_schema，实测稳定）：
+
+```bash
+curl -s $BASE/v1/chat -H "Content-Type: application/json" -d '{
+  "model": "deepseek-v4-pro",
+  "messages": [{"role": "user", "content": "介绍北京的天气"}],
+  "response_format": {
+    "type": "object",
+    "properties": {"city": {"type": "string"}, "temp": {"type": "integer"}},
+    "required": ["city", "temp"]
+  }
+}'
+```
+
 # 流式 + 结构化同开（校验结论在 done.validation）
 curl -N $BASE/v1/chat -H "Content-Type: application/json" -d '{
   "model": "deepseek-v4-flash",
@@ -93,8 +109,8 @@ curl -s $BASE/v1/chat -H "Content-Type: application/json" -d '{
 
 ```bash
 curl -s $BASE/health      # {"status":"ok"}
-curl -s $BASE/v1/metrics  # requests_total / llm_calls_total / errors_total / retries_total
-                          # rate_limited_total / status_counts / llm_latency 分位数 / llm_ttft
+curl -s $BASE/v1/metrics  # counters.requests_total / llm_calls_total / errors_total / retries_total
+                          # rate_limited_total；status_counts / llm_latency 分位数 / llm_ttft 为顶层字段
 curl -s $BASE/v1/chat -H "Content-Type: application/json" \
   -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}]}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['elapsed_ms'], 'ms')"
@@ -108,9 +124,9 @@ curl 层表现为"最终成功"。观测手段是 `/v1/metrics` 的 `retries_tot
 
 ```bash
 # 上游抖动（500/429/超时）时请求仍返回 200；对比前后 retries_total 增量即重试次数
-curl -s $BASE/v1/metrics | python3 -c "import json,sys; print(json.load(sys.stdin).get('retries_total'))"
+curl -s $BASE/v1/metrics | python3 -c "import json,sys; print(json.load(sys.stdin)['counters']['retries_total'])"
 # ...期间发起业务请求...
-curl -s $BASE/v1/metrics | python3 -c "import json,sys; print(json.load(sys.stdin).get('retries_total'))"
+curl -s $BASE/v1/metrics | python3 -c "import json,sys; print(json.load(sys.stdin)['counters']['retries_total'])"
 
 # JSON 日志中可见 WARNING 级"上游可重试错误"记录（含 attempt / backoff / request_id）
 tail -f gateway.log | grep -i retry
