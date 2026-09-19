@@ -10,7 +10,8 @@
 - snapshot() 返回 JSON 可序列化 dict，p50/p95/p99 就地计算（样本封顶 10000）
 
 对应 OTel/Prometheus 语义：
-  requests_total / errors_total / rate_limited_total / retries_total
+  requests_total / errors_total / rate_limited_total / model_rate_limited_total
+  retries_total
   llm_calls_total / llm_errors_total / http_latency_ms / llm_latency_ms / llm_ttft_ms
 """
 
@@ -27,6 +28,7 @@ _counters: dict[str, int] = {
     "requests_total": 0,      # 业务请求总数（含被限流/失败的）
     "errors_total": 0,        # HTTP >= 4xx 的请求数
     "rate_limited_total": 0,  # 被限流中间件拒绝（429）的请求数
+    "model_rate_limited_total": 0,  # 模型级限流拒绝（429）的请求数（/v1/chat 内）
     "retries_total": 0,       # Gateway 对上游发起的重试次数
     "llm_calls_total": 0,     # 上游 LLM 调用成功次数
     "llm_errors_total": 0,    # 上游 LLM 调用失败次数（重试耗尽后）

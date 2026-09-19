@@ -1,9 +1,9 @@
 {
   "module": "rate_limit",
   "description": "限流：阈值触发 / 429 策略 / 并发压力 / 窗口恢复",
-  "started_at": "2026-09-18T22:34:57",
-  "finished_at": "2026-09-18T22:35:08",
-  "duration_s": 11.2,
+  "started_at": "2026-09-19T22:22:31",
+  "finished_at": "2026-09-19T22:22:48",
+  "duration_s": 17.6,
   "steps": [
     {
       "n": 1,
@@ -28,6 +28,30 @@
     {
       "n": 6,
       "action": "等待窗口滑动 4.5s -> 验证限流自动恢复"
+    },
+    {
+      "n": 7,
+      "action": "重启网关（IP 限流禁用，MODEL_RATE_LIMITS 令牌桶：flash rpm=12/burst=3，pro burst=1）"
+    },
+    {
+      "n": 8,
+      "action": "连续 12 个请求（flash burst=3）-> 前 3 个 200、其余 429"
+    },
+    {
+      "n": 9,
+      "action": "校验模型级 429 响应：scope=model + Retry-After"
+    },
+    {
+      "n": 10,
+      "action": "切换 model=deepseek-v4-pro（burst=1 独立桶）验证 per-model 隔离"
+    },
+    {
+      "n": 11,
+      "action": "抓取 /v1/metrics 验证分级计数器"
+    },
+    {
+      "n": 12,
+      "action": "等待 5.5s 令牌桶惰性填充（0.2 token/s 攒 1 个需 5s）-> 验证恢复"
     }
   ],
   "checks": [
@@ -55,6 +79,12 @@
       "name": "error.type = rate_limit_error",
       "expected": "rate_limit_error",
       "actual": "rate_limit_error",
+      "passed": true
+    },
+    {
+      "name": "error.scope = ip（一级限流标识）",
+      "expected": "ip",
+      "actual": "ip",
       "passed": true
     },
     {
@@ -119,57 +149,130 @@
       "actual": "true",
       "passed": true,
       "detail": "recovery_s=4.5"
+    },
+    {
+      "name": "突发上限精确：放行数 == burst(3)",
+      "expected": "3",
+      "actual": "3",
+      "passed": true
+    },
+    {
+      "name": "桶耗尽后其余全部 429",
+      "expected": "9",
+      "actual": "9",
+      "passed": true
+    },
+    {
+      "name": "error.type = rate_limit_error",
+      "expected": "rate_limit_error",
+      "actual": "rate_limit_error",
+      "passed": true
+    },
+    {
+      "name": "error.scope = model（区分于 IP 级 scope=ip）",
+      "expected": "model",
+      "actual": "model",
+      "passed": true
+    },
+    {
+      "name": "error.model = deepseek-v4-flash",
+      "expected": "deepseek-v4-flash",
+      "actual": "deepseek-v4-flash",
+      "passed": true
+    },
+    {
+      "name": "error.retryable = true",
+      "expected": "true",
+      "actual": "true",
+      "passed": true
+    },
+    {
+      "name": "Retry-After 头存在且为正整数",
+      "expected": "true",
+      "actual": "true",
+      "passed": true,
+      "detail": "Retry-After=5"
+    },
+    {
+      "name": "flash 桶耗尽后 pro 首请求仍 200（独立桶互不影响）",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
+    },
+    {
+      "name": "model_rate_limited_total == 9（模型级拒绝数）",
+      "expected": "9",
+      "actual": "9",
+      "passed": true
+    },
+    {
+      "name": "rate_limited_total == 0（IP 级禁用未触发）",
+      "expected": "0",
+      "actual": "0",
+      "passed": true
+    },
+    {
+      "name": "status_counts 429 计数与模型级拒绝数一致",
+      "expected": "9",
+      "actual": "9",
+      "passed": true
+    },
+    {
+      "name": "令牌攒够后请求恢复 200（无需人工干预）",
+      "expected": "200",
+      "actual": "200",
+      "passed": true
     }
   ],
   "evidence": {
     "sequential_results": [
       {
         "status": 200,
-        "ms": 50.9
+        "ms": 50.3
       },
       {
         "status": 200,
-        "ms": 14.4
-      },
-      {
-        "status": 200,
-        "ms": 14.0
-      },
-      {
-        "status": 200,
-        "ms": 14.1
-      },
-      {
-        "status": 200,
-        "ms": 14.1
-      },
-      {
-        "status": 200,
-        "ms": 14.2
-      },
-      {
-        "status": 429,
         "ms": 12.3
       },
       {
-        "status": 429,
-        "ms": 12.8
+        "status": 200,
+        "ms": 11.9
+      },
+      {
+        "status": 200,
+        "ms": 12.0
+      },
+      {
+        "status": 200,
+        "ms": 12.3
+      },
+      {
+        "status": 200,
+        "ms": 11.7
       },
       {
         "status": 429,
-        "ms": 16.2
+        "ms": 11.2
       },
       {
         "status": 429,
-        "ms": 17.4
+        "ms": 10.9
       },
       {
         "status": 429,
-        "ms": 40.0
+        "ms": 11.0
       },
       {
         "status": 429,
-        "ms": 27.8
+        "ms": 10.9
+      },
+      {
+        "status": 429,
+        "ms": 11.2
+      },
+      {
+        "status": 429,
+        "ms": 10.5
       }
     ],
     "rejected_response_sample": {
@@ -178,6 +281,7 @@
         "error": {
           "category": "rate_limited",
           "type": "rate_limit_error",
+          "scope": "ip",
           "message": "请求过于频繁（限流 6 次/4s 窗口），请稍后重试",
           "retryable": true
         }
@@ -187,61 +291,139 @@
     "concurrent_results": [
       {
         "status": 200,
-        "ms": 706.1
+        "ms": 1037.4
       },
       {
         "status": 200,
-        "ms": 651.0
+        "ms": 1059.0
       },
       {
         "status": 200,
-        "ms": 663.3
-      },
-      {
-        "status": 429,
-        "ms": 717.2
-      },
-      {
-        "status": 429,
-        "ms": 714.9
-      },
-      {
-        "status": 429,
-        "ms": 715.2
-      },
-      {
-        "status": 429,
-        "ms": 713.0
-      },
-      {
-        "status": 429,
-        "ms": 714.7
-      },
-      {
-        "status": 429,
-        "ms": 714.8
+        "ms": 1041.5
       },
       {
         "status": 200,
-        "ms": 708.0
+        "ms": 1061.0
+      },
+      {
+        "status": 429,
+        "ms": 1065.7
+      },
+      {
+        "status": 429,
+        "ms": 1061.3
       },
       {
         "status": 200,
-        "ms": 710.2
+        "ms": 1060.0
       },
       {
         "status": 200,
-        "ms": 705.9
+        "ms": 1045.2
+      },
+      {
+        "status": 429,
+        "ms": 1061.5
+      },
+      {
+        "status": 429,
+        "ms": 1061.5
+      },
+      {
+        "status": 429,
+        "ms": 1058.8
+      },
+      {
+        "status": 429,
+        "ms": 1060.7
       }
     ],
     "recovery": {
       "status": 200,
       "recovery_s": 4.5
+    },
+    "model_config": {
+      "deepseek-v4-flash": {
+        "rpm": 12,
+        "burst": 3
+      },
+      "deepseek-v4-pro": {
+        "rpm": 12,
+        "burst": 1
+      }
+    },
+    "model_sequential_results": [
+      {
+        "status": 200,
+        "ms": 34.4
+      },
+      {
+        "status": 200,
+        "ms": 12.2
+      },
+      {
+        "status": 200,
+        "ms": 11.9
+      },
+      {
+        "status": 429,
+        "ms": 11.2
+      },
+      {
+        "status": 429,
+        "ms": 11.5
+      },
+      {
+        "status": 429,
+        "ms": 11.4
+      },
+      {
+        "status": 429,
+        "ms": 11.3
+      },
+      {
+        "status": 429,
+        "ms": 11.4
+      },
+      {
+        "status": 429,
+        "ms": 11.3
+      },
+      {
+        "status": 429,
+        "ms": 11.4
+      },
+      {
+        "status": 429,
+        "ms": 11.6
+      },
+      {
+        "status": 429,
+        "ms": 11.4
+      }
+    ],
+    "model_rejected_response_sample": {
+      "status": 429,
+      "body": {
+        "error": {
+          "category": "rate_limited",
+          "type": "rate_limit_error",
+          "scope": "model",
+          "model": "deepseek-v4-flash",
+          "message": "模型 deepseek-v4-flash 调用频率超限（12 rpm，突发上限 3），请稍后重试",
+          "retryable": true
+        }
+      },
+      "retry_after": "5"
+    },
+    "model_recovery": {
+      "status": 200,
+      "recovery_s": 5.5
     }
   },
   "summary": {
-    "total": 14,
-    "passed": 14,
+    "total": 27,
+    "passed": 27,
     "failed": 0,
     "status": "PASS"
   }

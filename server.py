@@ -37,9 +37,14 @@
   RETRY_MAX_ATTEMPTS / RETRY_BACKOFF_BASE_S / RETRY_BACKOFF_MAX_S
       上游重试：retryable 错误（network/server/429/409）指数退避重试，默认 3 次尝试
   RATE_LIMIT_RPM / RATE_LIMIT_WINDOW_S
-      限流：per 客户端 IP 滑动窗口（默认禁用），超限 429 + Retry-After
+      一级限流（IP）：per 客户端 IP 滑动窗口（默认禁用），超限 429 + Retry-After
+      错误体 scope=ip
+  MODEL_RATE_LIMITS
+      二级限流（模型）：JSON 配置 per-model 令牌桶（默认禁用），如
+      '{"deepseek-v4-pro": {"rpm": 10, "burst": 20}}'
+      在 /v1/chat 路由内检查（IP 限流通过后），超限 429 + Retry-After，错误体 scope=model
   GET /v1/metrics
-      运行指标快照：请求/错误/限流/重试计数 + 延迟分位数（JSON）
+      运行指标快照：请求/错误/限流（IP 与模型分级）/重试计数 + 延迟分位数（JSON）
 """
 
 import json
@@ -60,6 +65,7 @@ from gateway.errors import GatewayError, from_unexpected, http_status_for
 from gateway.gateway import Gateway, MODEL_ROUTES, StructuredOutputError
 from gateway.logger_setup import new_request_id, setup_logging
 from gateway.ratelimit import from_env as ratelimit_from_env
+from gateway.ratelimit import from_env_for_models as model_ratelimits_from_env
 from gateway.prompt_render import (
     InvalidTemplateError,
     MissingVariablesError,
@@ -133,6 +139,7 @@ async def _request_id_middleware(request: Request, call_next):
                 content={"error": {
                     "category": "rate_limited",
                     "type": "rate_limit_error",
+                    "scope": "ip",       # 一级限流（IP）标识，与 scope=model 区分
                     "message": f"请求过于频繁（限流 {limiter.limit} 次/{limiter.window_s:g}s 窗口），请稍后重试",
                     "retryable": True,
                 }},
@@ -263,6 +270,8 @@ _ensure_sample_prompt(store)
 
 # 限流器：RATE_LIMIT_RPM 未设置或为 0 时为 None（禁用）
 limiter = ratelimit_from_env()
+# 模型级限流器：MODEL_RATE_LIMITS 未设置/非法时为 {}（禁用），per-model 令牌桶
+model_limiters = model_ratelimits_from_env()
 
 # prompt id 规则：小写字母/数字开头，可含 - _（作为 slug 出现在 URL 和引用里）
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -554,6 +563,42 @@ def chat(req: ChatRequestIn):
             400,
             f"不支持的模型: {req.model}，支持: {list(MODEL_ROUTES.keys())}",
         )
+
+    # ---- 二级限流（模型级令牌桶）：IP 限流（一级，中间件）通过后才到达这里 ----
+    # 多级协同：任一级被拒即 429；错误体 scope 字段区分来源（ip | model）。
+    # 用 JSONResponse 而非 HTTPException：保持顶层 {"error": {...}} 结构与
+    # IP 限流完全同构（HTTPException 会包成 {"detail": ...}，客户端需两套解析）
+    model_limiter = model_limiters.get(req.model)
+    if model_limiter is not None:
+        allowed, retry_after = model_limiter.check(req.model)
+        if not allowed:
+            # requests_total/errors_total/status_counts/http_latency 由中间件
+            # 出口统一统计（路由内 return 也会经过 call_next 返回），此处只记
+            # 路由特有的模型级限流计数，避免双计
+            metrics.inc("model_rate_limited_total")
+            logger.warning(
+                "请求被模型级限流拒绝",
+                extra={
+                    "path": "/v1/chat",
+                    "model": req.model,
+                    "retry_after_s": retry_after,
+                    "limit_rpm": model_limiter.rpm,
+                    "burst": model_limiter.burst,
+                },
+            )
+            return JSONResponse(
+                status_code=429,
+                content={"error": {
+                    "category": "rate_limited",
+                    "type": "rate_limit_error",
+                    "scope": "model",    # 二级限流（模型）标识
+                    "model": req.model,
+                    "message": f"模型 {req.model} 调用频率超限（{model_limiter.rpm} rpm，"
+                               f"突发上限 {model_limiter.burst}），请稍后重试",
+                    "retryable": True,
+                }},
+                headers={"Retry-After": str(int(retry_after))},
+            )
 
     # 结构化输出 schema 预检（fail fast）：含不支持的关键字直接 400，
     # 不发起 LLM 调用——避免上游返回后才校验失败，浪费一次调用
